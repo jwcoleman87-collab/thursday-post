@@ -1,38 +1,39 @@
-# Thursday Post overnight launch build
+# Thursday Post overnight build — 10 September 2026
 
-Started 9 September 2026. Branch: codex/launch-build. Production baseline remains ae1e5a1; do not claim new work deployed until verified.
+Application implementation is deployed and verified. The project is not open for paying customers: the remaining account, price and publisher decisions are listed in MORNING_START.md and LAUNCH_CHECKLIST.md.
 
-## Authorisation and decisions
-- User requested overnight implementation of launch checklist and supplied design brief.
-- Configurable monthly plan; LIVE SALES MUST REMAIN CLOSED until James sets price.
-- Existing Stripe account may be used. James handles identity/business/bank verification.
-- Domain, service budget and live AI activation not confirmed. Existing NEWSROOM_AI_PAUSED=true remains in force. No paid upgrades/domain purchases without these decisions.
-- Reader correspondence workbenchadmin@gmail.com. Existing infrastructure account identities stay separate.
-- Publication and edition distribution require explicit James approval. No outreach, fabricated subscribers/testimonials or automatic publication.
-- Latest design: strong broadsheet, warm off-white/black/charcoal, restrained accent, no rounded-card reader UI. Claude template URL/path requested and pending. Horse Thursday standing at post identity retained; new brief mentions starting/post concept, exact approved artwork not available.
+## Authorisation that remains in force
+- Only Thursday Post work. Reader contact is workbenchadmin@gmail.com; infrastructure identities stay unchanged.
+- Sales must remain closed until James chooses/validates the monthly AUD price and explicitly opens them.
+- Live AI remains paused. No card, domain purchase, paid upgrade or new service budget was authorised.
+- Existing Stripe account use is authorised, but its browser remains on the sign-in page. James completes verification himself.
+- Article approval, edition release and SEND remain separate explicit owner actions. No outreach, fabricated readers or autonomous publication.
 
-## Parallel ownership
-- subscriber_commerce: new members/commerce types/store usage, subscriber auth, Stripe checkout/portal/webhooks/settings, member routes/page and tests.
-- launch_gaps: domain/engine/providers/ingestion and editorial/retrieval tests; gap resolution, draft editing, corrections/takedown, bounded missing-source retrieval.
-- brand_recall: new editions/delivery types, routes/pages, durable queue/suppression/unsubscribe and tests.
-- root: shared durable-store.ts, service/API integration, public/operator design, assets, configuration, infrastructure, docs, final verification/deploy.
+## Completed
+- Editorial revisions, evidence-gap resolution, right-of-reply invalidation/reconfirmation, corrections and withdrawal.
+- Persistent member sign-in, consent, server paywall, Stripe lifecycle integration with test/live isolation and closed-sales controls.
+- Ordered reviewed editions, member archive/print, explicit delivery queue, retries, unsubscribe and bounce/complaint suppression.
+- Source-only collection with AI paused, collected backlog research, bounded retrieval, run records, usage/cost estimates, health and owner alert controls.
+- Private backup export and restore tools; hosted export restored into a new local SQLite file with verified integrity.
+- Broadsheet reader pages, draft Thursday-at-post mark, policy/contact/Post Box pages and the latest subscription-only GitHub homepage preserved and wired to real readiness.
+- Safe member secret and canonical site URL configured in the approved Vercel project.
+- One-page Claude handoff, current launch checklist, morning startup and operations/recovery guides.
 
-## Contracts
-- durable-store: readDocument<T>(key,initial), updateDocument<T,R>(key,initial,synchronousMutator), closeDocuments; atomic named document in same durable SQLite/Postgres database.
-- Canonical NEWSROOM_PUBLIC_URL, RESEND_FROM_EMAIL, RESEND_API_KEY; separate MEMBER_SESSION_SECRET and DELIVERY_SIGNING_SECRET.
-- Members exports currentMember/requireMember(request), hasPaidAccess(member), getDeliveryRecipients(), suppressMember(email,reason).
-- Publication new optional status: published/retracted/removed. Immutable original preserved; public/delivery must respect status.
+## Evidence
+- 107/107 tests pass; TypeScript and local/Vercel production builds pass.
+- Browser desktop/mobile layouts and reader/owner navigation checked; no application errors or page-wide overflow observed.
+- Hosted owner APIs/checkout reject anonymous access (401), owner login 200, live GO intentionally paused (503), private demo GO 200, real source collection 200.
+- Two live source records retained; no active run lease, monitoring paused, zero public articles, zero payments and no outbound email.
+- Payment/email lifecycle tests use controlled transports. Actual Stripe/member-email/delivery provider journeys are still pending connection.
 
-## Verified baseline
-- 47 tests passed before launch work; hosted demo stopped for approval, zero public articles.
-- GitHub private https://github.com/jwcoleman87-collab/thursday-post; existing live https://the-racing-desk.vercel.app.
-- New dependencies/install/tests/deployment in progress; no new result yet.
+## Repository and hosting
+- Private GitHub: https://github.com/jwcoleman87-collab/thursday-post
+- Website: https://the-racing-desk.vercel.app ; owner /newsroom ; operations /operations ; paper /news.
+- Branch codex/launch-build incorporates newer origin/master homepage commits through 45e317f. No existing work was discarded.
+- CLI deployments remain explicit. GitHub Actions runs checks; it does not auto-deploy unreviewed changes against live data.
+- Current application deployment verified: dpl_7xQtAo9umprXEmMuRKLQ6Aqsm8vk. Final documentation/upload/CI and a minor price-display polish are being closed out.
 
-## Next
-1. Complete module implementations and integrate stable contracts.
-2. Complete broadsheet + owner operations and accounts UI against design brief/template when supplied.
-3. Test all original and new flows, browser desktop/mobile, negative access tests, payment/email mocks then connected sandbox/live configuration as authorised.
-4. Push reviewed code, deploy only verified release, keep live sales/AI/email clearly gated where account inputs missing.
-5. Record exact working capabilities, outstanding owner actions and evidence; pause overnight follow-up when done.
+## Remaining work needs external inputs
+Stripe sign-in/verification and keys, monthly price, domain and verified Resend sending/receiving, Gmail forwarding, AI verification/budget/activation, commercial business/hosting/rights details, exact design template/artwork, genuine editorial trial editions and pilot customers. Provider-backed purchase/payout/delivery tests must follow those connections. Offsite retention/backups and remote Postgres restoration are still operating setup work.
 
-Overnight heartbeat ID: finish-thursday-post-overnight. Keep quiet when unchanged; report meaningful progress or needed action.
+Overnight heartbeat: finish-thursday-post-overnight. Pause after the final source upload/verification; resume when James supplies actionable inputs. Do not spend repeated runs restating unchanged dependencies.

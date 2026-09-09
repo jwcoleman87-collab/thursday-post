@@ -59,7 +59,7 @@ export default function SubscribeLanding() {
             </>
           ) : offer ? <div className="tp-success"><strong>Preparing the first edition.</strong><p>Subscriptions are not open yet. The price and launch date will be announced here.</p></div> : <p role="status">Checking subscription availability…</p>}
           {error?<p role="alert" className="tp-error">{error}</p>:null}
-          <p className="tp-smallprint">{offer?.liveSalesEnabled?`${offer.priceDisplay} per month. Renews until cancelled. Email preferences and billing are managed separately.`:'No subscription payment is currently being taken.'}</p>
+          <p className="tp-smallprint">{offer?.liveSalesEnabled?`${offer.priceDisplay}. Renews until cancelled. Email preferences and billing are managed separately.`:'No subscription payment is currently being taken.'}</p>
           <nav className="tp-links" aria-label="Subscriber information"><Link href="/subscribe">Subscription details</Link><Link href="/member">Reader sign in</Link><a href="mailto:workbenchadmin@gmail.com">Contact the Post</a></nav>
         </div>
 

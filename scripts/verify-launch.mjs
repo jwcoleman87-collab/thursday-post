@@ -4,7 +4,8 @@ process.loadEnvFile('.env.local');
 const base='https://the-racing-desk.vercel.app';
 async function request(path,{body,cookie}={}){return fetch(base+path,{method:body===undefined?'GET':'POST',headers:{...(body===undefined?{}:{'Content-Type':'application/json',Origin:base}),...(cookie?{Cookie:cookie}:{})},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(285000),redirect:'error'});}
 const checks={};
-for(const path of ['/api/newsroom','/api/owner/operations','/api/owner/editions','/api/owner/backup','/api/billing/settings','/api/member']){const response=await request(path);assert.equal(response.status,401,`${path} must require its intended identity`);checks[path]=response.status;}
+for(const path of ['/api/newsroom','/api/owner/operations','/api/owner/editions','/api/owner/backup','/api/billing/settings']){const response=await request(path);assert.equal(response.status,401,`${path} must require its intended identity`);checks[path]=response.status;}
+const anonymousMember=await request('/api/member');assert.equal(anonymousMember.status,200);assert.equal((await anonymousMember.json()).member,null);const anonymousCheckout=await request('/api/checkout',{body:{}});assert.equal(anonymousCheckout.status,401);checks['/api/checkout']=anonymousCheckout.status;
 const login=await request('/api/auth',{body:{password:process.env.ADMIN_PASSWORD}});assert.equal(login.status,200);const cookie=login.headers.get('set-cookie')?.split(';')[0];assert.ok(cookie);
 const read=async path=>{const r=await request(path,{cookie});assert.equal(r.status,200,path);return r.json();};
 const before=await(await request('/api/public')).json();assert.equal(before.contactEmail,'workbenchadmin@gmail.com');

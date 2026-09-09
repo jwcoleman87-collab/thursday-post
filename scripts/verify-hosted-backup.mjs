@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import {mkdirSync,writeFileSync} from 'node:fs';
+import {parseBackup,restoreBackupToNewSqlite} from '../src/lib/backup.ts';
+import {readBoundedBody} from '../src/lib/email.ts';
+process.loadEnvFile('.env.local');
+const base='https://the-racing-desk.vercel.app';
+const login=await fetch(`${base}/api/auth`,{method:'POST',headers:{'Content-Type':'application/json',Origin:base},body:JSON.stringify({password:process.env.ADMIN_PASSWORD}),signal:AbortSignal.timeout(30000)});
+assert.equal(login.status,200,'Owner login failed');const cookie=login.headers.get('set-cookie')?.split(';')[0];assert.ok(cookie);
+const response=await fetch(`${base}/api/owner/backup`,{headers:{Cookie:cookie},signal:AbortSignal.timeout(30000)});assert.equal(response.status,200,'Hosted backup failed');assert.match(response.headers.get('cache-control')||'',/no-store/);
+const text=await readBoundedBody(response,64*1024*1024);const backup=parseBackup(text);const id=new Date().toISOString().replaceAll(':','-').replaceAll('.','-');
+mkdirSync('data/backups',{recursive:true});mkdirSync('data/restore-drill',{recursive:true});const file=`data/backups/hosted-${id}.json`;const target=`data/restore-drill/hosted-${id}.sqlite`;
+writeFileSync(file,text,{flag:'wx',mode:0o600});await restoreBackupToNewSqlite(backup,target);
+console.log(JSON.stringify({hostedBackupStatus:response.status,privateBackup:file,isolatedRestore:target,integrity:'verified',liveDatabaseChanged:false}));

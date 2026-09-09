@@ -4,7 +4,7 @@ An Australian thoroughbred publication with a private editorial workspace, evide
 
 ## Current status — 10 September 2026
 
-**106/106 automated tests passed; TypeScript passed.** The current production build, browser checks and deployment verification are pending. Earlier hosted checks do not establish that this expanded implementation is deployed or ready for paying customers.
+**107/107 automated tests passed; TypeScript and production builds passed.** The expanded app is deployed. Desktop/mobile browser checks, hosted owner/access gates, paused AI, demo review and real source-only collection passed. A private hosted backup restored into a new local database with verified integrity. Start with [the morning startup guide](docs/MORNING_START.md).
 
 The existing [hosted project](https://the-racing-desk.vercel.app), repository identity and infrastructure names remain unchanged. Its configured infrastructure is Vercel and Sydney Neon Postgres; local work uses SQLite.
 

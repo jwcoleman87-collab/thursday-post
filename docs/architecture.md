@@ -1,6 +1,6 @@
 # Thursday Post architecture
 
-One Next.js application serves readers at `/` and private workflows at `/newsroom`, `/editorial/[id]` and `/operations`. Owner and member identities are separate. The existing [Vercel project](https://the-racing-desk.vercel.app) and repository names remain unchanged. Local SQLite and configured Sydney Neon Postgres implement the same storage contracts. Deployment verification of the expanded candidate is pending.
+One Next.js application serves the subscription landing page at `/`, the newspaper at `/news`, and private workflows at `/newsroom`, `/editorial/[id]` and `/operations`. The homepage preserves the incoming landing design while reflecting actual signup/sales readiness. Owner and member identities are separate. The existing [Vercel project](https://the-racing-desk.vercel.app) and repository names remain unchanged. Local SQLite and configured Sydney Neon Postgres implement the same storage contracts. Hosted access, source-only collection and isolated backup recovery have been verified; live payment, model and email connections remain pending.
 
 ## Evidence and editorial flow
 

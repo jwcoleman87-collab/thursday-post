@@ -1,6 +1,6 @@
 # Acceptance record — 10 September 2026
 
-**Current repository: 106/106 automated tests passed; TypeScript passed.** The expanded production build is in progress. Browser QA and deployment verification remain pending. Earlier hosted checks applied to the previous release and must not be presented as acceptance of this candidate.
+**Current repository: 107/107 automated tests passed; TypeScript and production builds passed.** The expanded application is deployed. Desktop/mobile checks found no application errors or page-wide overflow; subscription, newspaper, member, archive, owner operations and draft-review navigation were checked.
 
 The existing [Vercel project](https://the-racing-desk.vercel.app), repository identity and Sydney Neon configuration are unchanged. `/` preserves the incoming subscription landing design with real signup/sales status; `/news` is the newspaper. Owners work at `/newsroom`. No new production publication, customer charge or outbound campaign has been verified during this build.
 
@@ -29,6 +29,8 @@ GitHub CI now defines install, typecheck, tests and production build. A workflow
 - Gmail forwarding needs a dedicated receiving address and mailbox configuration. Inbound, delivery-event and Stripe signatures use their respective secrets. `.eml` import remains available.
 - Public policy copy, wagering review, licensed data and imagery rights need publisher reviews/integrations. Automated checks are not legal or rights clearance.
 - The exact Claude template and approved horse artwork are missing. The layout and mark remain drafts.
-- Complete the production build, browser flows and deployment smoke tests. Verify new reader/owner routes and access gates on the deployed candidate. Release, SEND and sales activation remain explicit.
+- Release, SEND and sales activation remain explicit. Real provider-backed customer sign-in, payments and email delivery still require their connections and end-to-end validation.
 
-Local restore drills passed. Remote Postgres restore and offsite/provider backup arrangements have not been exercised by these tests. See [operations and recovery](OPERATIONS_RUNBOOK.md).
+Hosted checks on 10 September (Sydney): anonymous owner APIs and checkout returned 401; owner login returned 200; anonymous member status contained no member; live research returned the intentional paused 503; private demo and real collection returned 200. Two live source records remain archived, two new run records completed, no active lease remained, monitoring stayed paused, sales remained closed and public article count stayed zero. No model request, customer charge or outbound email was made.
+
+The authenticated hosted backup returned 200 with private/no-store caching and restored into a newly created local SQLite file with matching data and integrity checks. Confidential backup and restore files remain under ignored `data/`. Remote Postgres restore, offsite schedules and provider snapshot arrangements remain unverified. See [operations and recovery](OPERATIONS_RUNBOOK.md).
