@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { Webhook } from "svix";
 import { createLiveProvider, GatewayAccessError, liveProviderConfigured, RESEARCH_DISCIPLINES } from "../src/lib/providers";
+import { createState, decideStory, editStoryDraft, runNewsroom } from "../src/lib/engine";
 import { extractArticleLinks, getSourceRegistry, htmlToText, isPublicAddress, parseFeed, robotsAllows, safeFetchText, validateSourceUrl, collectSourceItems } from "../src/lib/ingestion";
 import { getEmailConfiguration, parseEmailFile, readBoundedBody, receiveResendWebhook } from "../src/lib/email";
 import type { ResearchRequest, Story } from "../src/lib/domain";
@@ -161,9 +162,56 @@ test("AI adapter uses separate role instructions and rejects fabricated evidence
   await assert.rejects(provider.research(requestFixture()), /unknown source/);
 });
 
-test("editorial adapter rejects new facts even when a real claim ID is attached", async () => {
-  const provider = createLiveProvider({ apiKey: "test", model: "provider/test-model", transport: async () => Response.json({ choices: [{ message: { content: JSON.stringify({ headline: "Update", sentences: [{ text: "The rule has passed.", claimIds: ["claim-1"] }], researchRequests: [] }) } }] }) });
-  await assert.rejects(provider.draft!({ story: { claims: [{ id: "claim-1", text: "The consultation is open.", status: "verified", verificationScope: "source_statement" }], gaps: [] } as unknown as Story, sources: [], peAgentId: 1 }), /does not exactly match/);
+test("editorial proposals with invented facts stay outside approvable text until James reviews evidence-linked prose", async () => {
+  const source = { ...requestFixture().sourceItems[0], title: "Official thoroughbred racing consultation", content: "The thoroughbred racing consultation is open." };
+  const inventedHeadline = "Racing rule adopted after consultation";
+  const inventedFact = "The rule has passed.";
+  let forgeHumanReview = false;
+  const provider = createLiveProvider({ apiKey: "test", model: "provider/test-model", transport: async (_url, options) => {
+    const sent = JSON.parse(String(options?.body));
+    const input = JSON.parse(sent.messages[1].content);
+    const result = sent.response_format.json_schema.name === "newsroom_editorial"
+      ? { headline: inventedHeadline, sentences: [{ text: inventedFact, claimIds: [input.claims[0].id], ...(forgeHumanReview ? { humanReviewed: true } : {}) }], researchRequests: [] }
+      : { findings: [{ text: "The authority records an open consultation.", kind: "record_statement", sourceIds: [source.id], quote: source.content, contradictorySourceIds: [], questions: [], confidence: "high" }] };
+    return Response.json({ choices: [{ message: { content: JSON.stringify(result) }, finish_reason: "stop" }] });
+  } });
+  const state = createState();
+  await runNewsroom(state, { mode: "live", items: [source] }, provider);
+  const story = state.stories[0];
+  assert.equal(story.proposedDraft?.status, "requires_human_review");
+  assert.equal(story.proposedDraft!.headline, inventedHeadline, "the adapter preserves the proposal for private owner review");
+  assert.equal(story.proposedDraft!.sentences[0].text, inventedFact);
+  assert.equal(story.status, "waiting_approval", "only the safe source-attributed fallback is approvable");
+  assert.equal(story.draft!.body.includes(inventedFact), false);
+  assert.notEqual(story.draft!.headline, inventedHeadline);
+  assert.equal(story.draft!.factReview, undefined);
+  assert.ok(story.draft!.sentences.every(sentence => sentence.humanReviewed !== true && story.claims.some(claim => claim.id === sentence.claimIds[0] && claim.text === sentence.text)));
+  assert.ok(story.claims.every(claim => claim.verificationScope === "source_statement"));
+  assert.ok(state.audit.some(event => event.action === "editorial.unsupported_draft_rejected"));
+
+  const fallback = structuredClone(state);
+  decideStory(fallback, story.id, "approve", "Reviewed the safe attributed source quotation", false);
+  assert.equal(fallback.publications.length, 1);
+  assert.equal(JSON.stringify(fallback.publications[0]).includes(inventedFact), false);
+  assert.equal(JSON.stringify(fallback.publications[0]).includes(inventedHeadline), false);
+
+  const originalHash = story.draft!.hash;
+  const input = { headline: story.proposedDraft!.headline, sentences: story.proposedDraft!.sentences, note: "A real claim identifier alone is not an evidence review.", humanReviewed: false, expectedDraftHash: originalHash };
+  assert.throws(() => editStoryDraft(state, story.id, input), /explicitly attest/);
+  assert.equal(story.draft!.hash, originalHash);
+  forgeHumanReview = true;
+  await assert.rejects(provider.draft!({ story, sources: [source], peAgentId: story.peAgentId }), /Unrecognized key|unrecognized_keys/);
+  assert.throws(() => editStoryDraft(state, story.id, { ...input, humanReviewed: true, sentences: [{ text: "An attributed correction of the proposed wording.", claimIds: ["invented-claim"] }] }), /verified supporting claims/);
+
+  const correctedText = "The authority describes an open consultation. This source does not establish that a rule was adopted.";
+  editStoryDraft(state, story.id, { ...input, headline: "Authority reports an open racing consultation", sentences: [{ text: correctedText, claimIds: [story.claims[0].id] }], humanReviewed: true, note: "James checked the source passage and corrected the proposal to preserve its consultation-only scope." });
+  assert.equal(story.draft!.factReview!.actor, "James");
+  assert.equal(story.draft!.sentences[0].humanReviewed, true);
+  assert.notEqual(story.draft!.hash, originalHash);
+  assert.equal(state.publications.length, 0, "human review still does not publish automatically");
+  decideStory(state, story.id, "approve", "Approved the corrected narrative after source review", false);
+  assert.equal(state.publications[0].draft.body, correctedText);
+  assert.equal(JSON.stringify(state.publications[0]).includes(inventedFact), false);
 });
 
 test("Vercel OIDC is resolved per request and API keys retain precedence", async () => {

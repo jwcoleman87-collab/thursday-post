@@ -115,7 +115,7 @@ export interface EvidenceGap {
   createdAt: string;
 }
 
-export interface ArticleSentence { text: string; claimIds: string[] }
+export interface ArticleSentence { text: string; claimIds: string[]; humanReviewed?: boolean }
 export interface ArticleDraft {
   id: string;
   headline: string;
@@ -126,6 +126,14 @@ export interface ArticleDraft {
   hash: string;
   createdAt: string;
   limitations: string[];
+  /** Human review is an editorial attestation, never automatic proof of a source's assertion. */
+  factReview?: { actor: "James"; note: string; reviewedAt: string };
+  reviewRevision?: number;
+  label?: "opinion" | "analysis" | "update" | "correction" | "right_of_reply";
+  deck?: string;
+  dateline?: string;
+  captions?: { mediaId: string; text: string; sourceIds: string[] }[];
+  access?: "public" | "members";
 }
 
 export interface ComplianceCheck {
@@ -161,10 +169,18 @@ export interface Story {
   gaps: EvidenceGap[];
   media: MediaAsset[];
   draft?: ArticleDraft;
+  draftHistory?: ArticleDraft[];
+  proposedDraft?: DraftResult & { createdAt: string; status: "requires_human_review" };
   compliance: ComplianceCheck[];
   approvals: Approval[];
   wagering: boolean;
   correctionOf?: string;
+  correctionReason?: string;
+  access?: "public" | "members";
+  publishedEvidenceAlerts?: { sourceIds: string[]; receivedAt: string; status: "open" | "reviewed" }[];
+  /** Internal editorial assessment only. Never expose this in the reader payload. */
+  editorialTone?: "A" | "B" | "N";
+  rightOfReply?: { status: "not_required" | "requested" | "received" | "declined" | "no_response"; note: string; recipient?: string; requestedAt?: string; deadline?: string; sourceIds: string[]; recordedAt: string; actor: "James" };
   error?: string;
   createdAt: string;
   updatedAt: string;
@@ -213,6 +229,11 @@ export interface Publication {
   approvedBy: "James";
   approvedAt: string;
   publishedAt: string;
+  status?: "published" | "retracted" | "removed";
+  statusHistory?: { status: "published" | "retracted" | "removed"; note: string; actor: "James"; createdAt: string }[];
+  correctionOf?: string;
+  correctionReason?: string;
+  access?: "public" | "members";
 }
 
 export interface NewsroomState {
@@ -244,6 +265,15 @@ export interface ResearchProvider {
   research(request: ResearchRequest): Promise<ResearchResult>;
   draft?(request: DraftRequest): Promise<DraftResult>;
 }
+export interface TargetedRetrievalRequest {
+  story: Story;
+  questions: string[];
+  sourceItems: SourceItem[];
+  maxItems: number;
+  deadline: number;
+}
+/** The trusted adapter enforces registered sources, robots rules and its absolute deadline. */
+export type TargetedRetriever = (request: TargetedRetrievalRequest) => Promise<{ items: SourceItem[]; errors?: { sourceId: string; message: string }[] }>;
 
 export interface FormRunner {
   horse: string;

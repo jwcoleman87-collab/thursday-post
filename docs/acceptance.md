@@ -1,37 +1,34 @@
-# Acceptance record
+# Acceptance record — 10 September 2026
 
-## Hosted application
+**Current repository: 106/106 automated tests passed; TypeScript passed.** The expanded production build is in progress. Browser QA and deployment verification remain pending. Earlier hosted checks applied to the previous release and must not be presented as acceptance of this candidate.
 
-- Live at [the-racing-desk.vercel.app](https://the-racing-desk.vercel.app), in Vercel account `jwcoleman87-collabs-projects`, backed by free Neon Postgres in Sydney.
-- Anonymous operator request: **401**. Owner login: **200**. Public endpoint: **200**.
-- Reader contact: **workbenchadmin@gmail.com**. Owner credentials remain private in `data/OWNER-ACCESS.txt`.
-- No article has been approved for public publication. Demo approvals remain private. Monitoring is paused.
-- Final production build succeeded. Hosted verification confirmed the updated contact, live GO safely paused with 503, and demo GO completing with 200 and one draft awaiting James’s approval. Public article count remains zero. The public page and owner sign-in were also checked in the browser.
+The existing [Vercel project](https://the-racing-desk.vercel.app), repository identity and Sydney Neon configuration are unchanged. Readers enter at `/`; owners work at `/newsroom`. No new production publication, customer charge or outbound campaign has been verified during this build.
 
-## Demonstrated newsroom loop
+## Automated evidence
 
-The deterministic demonstration uses fictional Harbour Racing records, clearly labelled `demo`. It needs no external credentials or paid model calls.
+Tests use temporary databases, synthetic records and controlled provider transports. They do not establish live account readiness.
 
-| Brief step | Observable implementation |
+| Area | Verified implementation boundary |
 |---|---|
-| Source enters | Fixture source archived with URL, source type, timestamps and provenance. |
-| Discovery and selection | Relevant candidate created, deduplicated and routed to multiple research disciplines. |
-| Research and Hub | Separate tasks produce structured findings, claims and source evidence. |
-| Deliberate gap | Missing primary authority record is identified by the controller. |
-| Targeted follow-up | Agent 2 receives the exact missing-record question. The synthetic primary record resolves that gap. |
-| PE drafting | Correct editorial desk produces a byline and sentence-to-claim references. |
-| Images | Unknown-context demo media is labelled and excluded. |
-| Wagering | Dedicated gate checks applicable stories; unreviewed policy blocks them. |
-| James gate | Completed package is `waiting_approval`; publication count stays zero. |
-| Public boundary | Demo approval creates only a private simulation. Public API stays empty. |
-| Trace | Select a passage in the review panel, then follow its Hub claim to research evidence and original source. |
+| Research | Six disciplines/four desks, explicit gaps, source tracing, retry/deadline limits, source revisions and demo isolation |
+| Collection | Source-only operation with paused AI, bounded registered retrieval, access/network restrictions and later consumption of collected backlog |
+| Editorial | Human-attested narrative, verified claim links, history, stale hashes, send-back resolution and B-tone right-of-reply gating |
+| Publication | Exact snapshots, linked corrections, audited withdrawal, member defaults and explicit free samples |
+| Members/billing | Sign-in/session boundaries, server-side access, checkout/portal settings and webhook reconciliation under fixture transports |
+| Editions/delivery | Edition snapshots, separate release/SEND, eligibility, suppression, withdrawal checks, retries and replay protection |
+| Operations | Durable run/usage records, lease recovery, safe errors, monitoring gaps and explicit owner-alert transport |
+| Recovery | Private export, integrity checks, populated newsroom/document round-trip, CLI restore and refusal to overwrite source/existing targets |
+| Scheduler/auth | Protected owner actions, same-origin checks, paused-AI nonmutation and authorized-queue processing while monitoring is paused |
 
-Automated tests also use a controlled non-demo source fixture to exercise the real publication state transition. Those tests run only in temporary storage and never publish externally.
+GitHub CI now defines install, typecheck, tests and production build. A workflow file is not evidence that a hosted run completed.
 
-Final verification: **47/47 tests passed** (18 adapter, 21 engine and 8 service tests), and TypeScript checking passed. Coverage includes the fixture chain, persistence, exact-draft approval, policy gates, source restrictions and email ingestion. It also checks that paused AI makes no fetch or mutation, and that Gateway verification failure releases the run lease before source collection. Controlled publication tests use temporary storage and never publish externally. Saved `.eml` import preserves reader leads for research.
+## Live connections and release work pending
 
-## Deliberately pending
+- AI Gateway previously required account verification; live AI remains paused. Source-only collection needs no model, but enabled sources still require actual access/terms review and successful live fetches.
+- Stripe and live Resend are unconnected. Sales are closed; the monthly AUD price is unset. Verify test-mode and then live checkout, webhooks, member sign-in, account management and refund/cancellation behavior before admitting paying customers.
+- Gmail forwarding needs a dedicated receiving address and mailbox configuration. Inbound, delivery-event and Stripe signatures use their respective secrets. `.eml` import remains available.
+- Public policy copy, wagering review, licensed data and imagery rights need publisher reviews/integrations. Automated checks are not legal or rights clearance.
+- The exact Claude template and approved horse artwork are missing. The layout and mark remain drafts.
+- Complete the production build, browser flows and deployment smoke tests. Verify new reader/owner routes and access gates on the deployed candidate. Release, SEND and sales activation remain explicit.
 
-James elected to defer live AI activation. Gateway returned **403 `customer_verification_required`**, requiring a card on file. `NEWSROOM_AI_PAUSED=true` is set locally and when deployed: live GO returns 503 without calling the model, while Demo mode remains available. The six research roles and four PE desks are implemented and demonstrated with fixtures; they are not currently running live model research. Resume only after verification, changing the pause setting to `false`, redeploying and testing live GO; enable monitoring afterward.
-
-Automatic forwarding from Gmail is not connected. It requires a dedicated Resend receiving address, API key, webhook signing secret, `NEWSROOM_INBOUND_ADDRESS`, and mailbox forwarding setup. Licensed form/data feeds and current wagering policy review also remain separate integrations. Deployment success does not imply those services are connected.
+Local restore drills passed. Remote Postgres restore and offsite/provider backup arrangements have not been exercised by these tests. See [operations and recovery](OPERATIONS_RUNBOOK.md).

@@ -1,23 +1,25 @@
 # Thursday Post — Claude UI handoff
 
-**Task:** Improve the existing UI only. Preserve the working application and its behaviour.
+Improve presentation while preserving application contracts. Read [DESIGN_PRODUCT_BRIEF.md](DESIGN_PRODUCT_BRIEF.md). James's exact Claude template and approved artwork are missing; the current broadsheet layout and horse mark are **drafts**, not an exact reproduction.
 
-**Correct branding:** **Thursday Post**. Logo: **one horse named Thursday, standing at one timber post, reins loosely tied; no person**. Understated silhouette, roughly half the horse suggested rather than detailed. Content, familiar and dependable; not tired or a flashy racing mascot. James previously approved a visual, but its artwork was not retrievable: use his approved reference when available. “The Racing Desk” and the “R” mark are incorrect placeholders. Correct the masthead, newsroom, login, footer, metadata and icons. Motto: **“collect, aggregate, distribute.”**
+**Brand:** Thursday Post. Motto: “collect, aggregate, distribute.” Thursday is one horse standing at one timber post, reins loosely tied, no person. Use an understated, familiar silhouette. Keep existing repository/Vercel identities and [hosted address](https://the-racing-desk.vercel.app). Reader email: workbenchadmin@gmail.com.
 
-**Project:** `C:\Users\James Coleman\Documents\ChatGPT\Newspaper`  
-**Current deployment:** https://the-racing-desk.vercel.app — retain this infrastructure/project identity during UI work.  
-**Reader contact:** workbenchadmin@gmail.com; infrastructure account emails remain separate.
+**Screens:** Reader `/` (`/news` alias), story `/news/[id]`, editions `/editions` and `/editions/[id]`; signup/offer `/subscribe`, account/sign-in `/member`. Owner `/newsroom`, `/editorial/[id]`, `/operations`, `/login`. Preserve corrections, Post Box and policy pages.
 
-**Built:** A Next.js 16 / React 19 / TypeScript application with custom CSS and Lucide icons. Vercel hosting, Sydney Neon Postgres, local SQLite, protected owner login and persistent audit/evidence records are working.
+**Built:** Next.js 16, React 19, TypeScript, custom CSS and Lucide. Six research disciplines feed a shared evidence hub and four PE desks. Public bylines are **By Agent 1–4**; PE labels stay internal. Internal tone: **A positive/constructive, B adverse/dubious, N neutral**. Never expose tone markers to readers. B stories require a right-of-reply outcome or rationale.
 
-GO → source discovery/selection → six research disciplines → shared evidence hub → targeted gap resolution → four editorial desks → compliance → **James: Approve / Reject / Send Back** → publication.
+Owners collect without AI, review proposals, save human-attested narrative with claim references, resolve gaps, approve/reject/send back, correct/withdraw articles, assemble editions, release, then explicitly SEND. Member access, billing, delivery and operations tooling are implemented. Preserve honest loading, empty, locked, blocked and provider-unconfigured states.
 
-Research roles: Open Source Monitoring; Official Records & Data; Expert Sources & Analysis; Social Media & Eyewitnesses; Imagery & Media Verification; Geopolitical & Regional Focus. Editorial desks: Politics & Governance; Society & People; Business & Technology; Global Affairs. Current bylines use Agent 1–4; James’s intended display is **“By Agent One”**, etc. PE stays internal. Form/wagering analysis is separate and currently restricted.
+**Stable backend contracts:**
 
-**Existing screens:** `/` has Overview, Stories, Evidence hub, Reader inbox, Agents and Settings. Story review exposes draft, sentence-to-source tracing, gaps, research history and approval controls. `/login` protects ownership; `/news` and `/news/[id]` show approved public articles. Source registration, monitoring controls and private `.eml` import exist.
+- `/api/newsroom`: existing `collect`, `run`, `decision`, source and monitoring actions; approval requires `expectedDraftHash`.
+- `/api/editorial`: `edit_draft`, `resolve_gap`, `right_of_reply`, `correction`, `publication_status`, `publication_access`. Preserve claim IDs, notes and explicit `humanReviewed: true` attestation.
+- `/api/owner/editions` and `/[id]`: creation/editing and separate `release`, `send`, `process`. Preserve `expectedReviewHash` and recipient-count confirmation.
+- `/api/public`, `/api/editions/[id]`: server-controlled member access. Never fetch private bodies to simulate a frontend paywall.
+- `/api/member/**`, `/api/checkout`, `/api/billing/**`, `/api/owner/operations`, `/api/owner/backup`: retain request shapes, sessions and same-origin protections.
 
-**Actual status:** 47 tests passed; production build and hosted demo passed. One demo draft awaits approval; zero public articles. Live AI and monitoring are paused by James. Gateway requires account verification. Automatic Gmail forwarding is unconnected; `.eml` import works. Licensed form feeds, media forensics, subscription billing and newsletter sending are not implemented. Live editorial output is conservative attributed source briefings, not unrestricted investigative prose.
+**Edit surface:** Components, page presentation, `globals.css`, `paper.css`, edition styles, metadata and brand assets. Keep `src/lib/**`, API routes, schemas, storage, dependencies, credentials and service configuration stable. Preserve demo/private boundaries and immutable approvals. Do not enable sales, providers, monitoring, publication or delivery during UI work.
 
-**Edit surface:** `src/components/{newsroom,public-edition}.tsx`, `src/app/globals.css`, login/page presentation, layout metadata and new brand assets. Keep `src/lib/**`, API routes, schemas, storage, secrets, service configuration and dependencies stable. Preserve event handlers, API payloads, `expectedDraftHash`, authentication, evidence links, honest blocked states and demo/public separation. Never publish or enable services during UI work.
+**Verification:** 106 tests and TypeScript pass. Current production build, browser and deployment checks are pending. AI is paused; Stripe/Resend live connections are incomplete, sales closed, price unset. Fixture tests do not prove provider operation.
 
-**Finish:** Check responsive layouts, keyboard access, empty/loading/error states and every existing action. Run `npm test`, `npm run typecheck`, `npm run build`; report changed files and checks. Keep the handoff concise.
+Finish with responsive/keyboard checks and `npm test`, `npm run typecheck`, `npm run build`; report actual results and remaining template differences.

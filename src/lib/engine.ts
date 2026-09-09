@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
-import type { ArticleDraft, Claim, ComplianceCheck, EvidenceGap, FindingInput, FormAnalysis, FormRunner, NewsroomState, PeAgentId, ResearchAgentId, ResearchProvider, ResearchRequest, ResearchResult, SourceItem, Story } from "./domain";
+import type { ArticleDraft, ArticleSentence, Claim, ComplianceCheck, EvidenceGap, FindingInput, FormAnalysis, FormRunner, NewsroomState, PeAgentId, ResearchAgentId, ResearchProvider, ResearchRequest, ResearchResult, SourceItem, Story, Publication, TargetedRetriever } from "./domain";
 import { PE_AGENTS, RESEARCH_AGENTS } from "./domain";
 import { demoResearchProvider } from "./fixtures";
 import { checkWagering, isWagering } from "./policy";
 
-export const BUDGET = { maxStories: 3, maxRounds: 2, retries: 1, taskTimeoutMs: 15_000, maxRunMs: 180_000, maxFindings: 8, maxQuoteWordsPerSource: 25 } as const;
+export const BUDGET = { maxStories: 3, maxRounds: 2, retries: 1, taskTimeoutMs: 15_000, maxRunMs: 180_000, maxFindings: 8, maxQuoteWordsPerSource: 25, maxAdditionalSources: 2, retrievalTimeoutMs: 20_000 } as const;
 const now = () => new Date().toISOString();
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 const stableId = (prefix: string, value: string) => `${prefix}-${digest(value).slice(0, 20)}`;
@@ -200,22 +200,195 @@ function assess(state: NewsroomState, story: Story) {
   }
 }
 
-export function draftHash(draft: Pick<ArticleDraft, "headline" | "byline" | "peAgentId" | "sentences" | "body" | "limitations">): string {
-  return digest(JSON.stringify({ headline: draft.headline, byline: draft.byline, peAgentId: draft.peAgentId, sentences: draft.sentences, body: draft.body, limitations: draft.limitations }));
+export function draftHash(draft: Pick<ArticleDraft, "headline" | "byline" | "peAgentId" | "sentences" | "body" | "limitations" | "factReview" | "reviewRevision" | "label" | "deck" | "dateline" | "captions" | "access">): string {
+  return digest(JSON.stringify({ headline: draft.headline, byline: draft.byline, peAgentId: draft.peAgentId, sentences: draft.sentences, body: draft.body, limitations: draft.limitations, factReview: draft.factReview, reviewRevision: draft.reviewRevision, label: draft.label, deck: draft.deck, dateline: draft.dateline, captions: draft.captions, access: draft.access }));
+}
+
+function verifiedClaim(state: NewsroomState, story: Story, id: string): Claim | undefined {
+  return story.claims.find(claim => claim.id === id && claim.status === "verified" && claim.verificationScope === "source_statement" && !claim.evidence.some(e => e.relation === "contradicts") && claim.evidence.some(e => e.exactMatch && e.relation === "supports" && state.sourceItems.some(source => story.sourceItems.includes(source.id) && source.id === e.sourceId && ["official", "data", "publication"].includes(source.type) && source.content.includes(e.quote) && (story.mode === "demo" || (!source.demo && !source.url.includes("example.invalid"))))));
+}
+
+function supportedSentence(state: NewsroomState, story: Story, sentence: ArticleSentence): boolean {
+  if (!sentence.claimIds.length || !sentence.claimIds.every(id => verifiedClaim(state, story, id))) return false;
+  if (sentence.claimIds.length === 1 && story.claims.find(c => c.id === sentence.claimIds[0])?.text === sentence.text) return true;
+  return sentence.humanReviewed === true && story.draft?.factReview?.actor === "James" && story.draft.factReview.note.trim().length >= 10;
+}
+
+function quotationBudgetMet(story: Story, draft: ArticleDraft): boolean {
+  const text = [draft.headline, draft.deck, draft.body, ...(draft.captions ?? []).map(caption => caption.text)].filter(Boolean).join("\n");
+  const ranges = new Map<string, { start: number; end: number }[]>();
+  for (const claim of story.claims) for (const evidence of claim.evidence) {
+    if (!evidence.exactMatch || evidence.relation !== "supports" || !evidence.quote) continue;
+    for (let start = text.indexOf(evidence.quote); start >= 0; start = text.indexOf(evidence.quote, start + evidence.quote.length)) {
+      ranges.set(evidence.sourceId, [...(ranges.get(evidence.sourceId) ?? []), { start, end: start + evidence.quote.length }]);
+    }
+  }
+  for (const entries of ranges.values()) {
+    const merged: { start: number; end: number }[] = [];
+    for (const entry of entries.sort((a, b) => a.start - b.start)) {
+      const last = merged.at(-1);
+      if (last && entry.start <= last.end) last.end = Math.max(last.end, entry.end);
+      else merged.push({ ...entry });
+    }
+    if (merged.reduce((count, range) => count + text.slice(range.start, range.end).trim().split(/\s+/).length, 0) > BUDGET.maxQuoteWordsPerSource) return false;
+  }
+  return true;
 }
 
 function checks(state: NewsroomState, story: Story): ComplianceCheck[] {
   const checkedAt = now();
   const draft = story.draft;
-  const supported = !!draft?.sentences.length && draft.sentences.every(sentence => sentence.claimIds.length === 1 && story.claims.some(c => c.id === sentence.claimIds[0] && c.status === "verified" && c.verificationScope === "source_statement" && c.text === sentence.text && c.evidence.some(e => e.exactMatch && e.relation === "supports" && state.sourceItems.some(s => s.id === e.sourceId && s.content.includes(e.quote)))));
+  const supported = !!draft?.sentences.length && draft.body === draft.sentences.map(sentence => sentence.text).join("\n\n") && quotationBudgetMet(story, draft) && draft.sentences.every(sentence => supportedSentence(state, story, sentence));
   const blockers = story.gaps.filter(g => g.status === "open" && g.blocking);
+  const replyOutstanding = story.editorialTone === "B" && (!story.rightOfReply || story.rightOfReply.status === "requested");
+  const allDraftText = [draft?.headline, draft?.deck, draft?.body, ...(draft?.captions ?? []).map(caption => caption.text)].filter(Boolean).join("\n");
+  story.wagering ||= isWagering(allDraftText);
   const output: ComplianceCheck[] = [
-    { id: `${story.id}-evidence`, gate: "evidence", status: supported && !blockers.length ? "passed" : "blocked", message: supported && !blockers.length ? "Every article sentence maps to an exact archived quotation. Verification scope is the source statement; underlying claims remain attributed." : `Evidence incomplete: ${blockers.length} blocking question(s); ${supported ? "sentence provenance intact" : "missing or invalid sentence provenance"}.`, checkedAt },
+    { id: `${story.id}-evidence`, gate: "evidence", status: supported && !blockers.length ? "passed" : "blocked", message: supported && !blockers.length ? draft?.factReview ? "James reviewed the narrative against linked archived evidence. This editorial attestation does not independently prove source assertions." : "Every article sentence maps to an exact archived quotation. Verification scope is the source statement; underlying claims remain attributed." : `Evidence incomplete: ${blockers.length} blocking question(s); ${supported ? "sentence provenance intact" : "missing or invalid sentence provenance"}.`, checkedAt },
     { id: `${story.id}-imagery`, gate: "imagery", status: story.media.length ? story.media.every(m => m.allowed) ? "passed" : "warning" : "not_applicable", message: story.media.length ? story.media.every(m => m.allowed) ? "All proposed images have required provenance and caption checks." : "Images with unknown provenance, context or rights are excluded from publication." : "No image is included.", checkedAt },
-    checkWagering(story),
-    { id: `${story.id}-publication`, gate: "publication", status: "passed", message: story.mode === "demo" ? "Synthetic demonstration. Approval creates a private demo publication only." : "Explicit James approval must match the exact immutable draft hash before public publication.", checkedAt },
+    checkWagering(draft ? { ...story, draft: { ...draft, body: allDraftText } } : story),
+    { id: `${story.id}-publication`, gate: "publication", status: replyOutstanding ? "blocked" : "passed", message: replyOutstanding ? "Adverse reporting needs James's recorded right-of-reply outcome or reason it is not required." : story.mode === "demo" ? "Synthetic demonstration. Approval creates a private demo publication only." : "Explicit James approval must match the exact immutable draft hash before public publication.", checkedAt },
   ];
   return output;
+}
+
+function editableStory(state: NewsroomState, storyId: string, expectedDraftHash?: string): Story {
+  const story = state.stories.find(item => item.id === storyId);
+  if (!story) throw new Error("Story not found.");
+  if (["published", "rejected"].includes(story.status)) throw new Error("This story already has a final decision; create a correction instead.");
+  if (["candidate", "researching", "drafting"].includes(story.status)) throw new Error("Research must finish before editorial changes.");
+  if (story.draft && (!expectedDraftHash || expectedDraftHash !== story.draft.hash || draftHash(story.draft) !== story.draft.hash)) throw new Error("The draft changed; reload and review the current draft before editing.");
+  return story;
+}
+
+function retainDraft(story: Story) {
+  if (story.draft && !story.draftHistory?.some(draft => draft.hash === story.draft!.hash)) (story.draftHistory ??= []).push(structuredClone(story.draft));
+}
+
+function replyScope(draft: ArticleDraft): string {
+  const text = (value?: string) => (value ?? "").trim().replace(/\s+/g, " ");
+  return JSON.stringify({
+    headline: text(draft.headline), deck: text(draft.deck), dateline: text(draft.dateline),
+    sentences: draft.sentences.map(sentence => ({ text: text(sentence.text), claimIds: [...new Set(sentence.claimIds)].sort() })),
+    captions: (draft.captions ?? []).map(caption => ({ mediaId: caption.mediaId, text: text(caption.text), sourceIds: [...new Set(caption.sourceIds)].sort() })),
+  });
+}
+
+/** Reply decisions concern the reporting shown to the subject, not access settings or review-note revisions. */
+function invalidateChangedReply(state: NewsroomState, story: Story, draft: ArticleDraft, newlyAdverse = false) {
+  if (story.editorialTone !== "B" || !story.rightOfReply || story.rightOfReply.status === "requested" || !story.draft) return;
+  if (!newlyAdverse && replyScope(story.draft) === replyScope(draft)) return;
+  audit(state, "editorial.right_of_reply_invalidated", `The adverse report changed and needs a fresh right-of-reply decision. Previous draft ${story.draft.hash}; previous record: ${JSON.stringify(story.rightOfReply)}`, story.id);
+  delete story.rightOfReply;
+}
+
+function replaceDraft(state: NewsroomState, story: Story, draft: ArticleDraft, detail: string, newlyAdverse = false) {
+  invalidateChangedReply(state, story, draft, newlyAdverse);
+  retainDraft(story);
+  draft.reviewRevision = (story.draft?.reviewRevision ?? 0) + 1;
+  draft.createdAt = now();
+  draft.hash = draftHash(draft);
+  draft.id = stableId("draft", `${story.id}|${draft.hash}`);
+  story.draft = draft;
+  story.compliance = checks(state, story);
+  transition(state, story, story.compliance.some(check => check.status === "blocked") ? "blocked" : "waiting_approval", detail);
+}
+
+/** An explicit owner finding closes a specific question; the model cannot invoke this decision. */
+export function resolveStoryGap(state: NewsroomState, storyId: string, gapId: string, input: { note: string; claimIds: string[]; expectedDraftHash?: string }): Story {
+  const story = editableStory(state, storyId, input.expectedDraftHash);
+  const gap = story.gaps.find(item => item.id === gapId);
+  if (!gap || gap.status !== "open") throw new Error("An open evidence gap is required.");
+  const note = input.note.trim();
+  const claimIds = [...new Set(input.claimIds)];
+  if (note.length < 10 || note.length > 3000 || !claimIds.length || claimIds.length > 12 || !claimIds.every(id => verifiedClaim(state, story, id))) throw new Error("Explain how the question is answered and link verified supporting claims from this story.");
+  gap.status = "resolved";
+  gap.claimIds = claimIds;
+  gap.resolution = `James reviewed the linked source evidence: ${note}`;
+  audit(state, "editorial.gap_resolved", `James resolved ${gap.id}; supporting claims ${claimIds.join(", ")}. ${note}`, story.id);
+  if (story.draft) replaceDraft(state, story, structuredClone(story.draft), "James resolved an evidence question. The revised draft fingerprint and current checks require a fresh publication decision.");
+  return story;
+}
+
+/** Human-attested prose stays explicitly distinct from machine-verified source quotations. */
+export function editStoryDraft(state: NewsroomState, storyId: string, input: { headline: string; sentences: ArticleSentence[]; note: string; humanReviewed: boolean; expectedDraftHash: string; label?: ArticleDraft["label"]; deck?: string; dateline?: string; captions?: ArticleDraft["captions"]; editorialTone?: Story["editorialTone"]; access?: "public" | "members" }): ArticleDraft {
+  const story = editableStory(state, storyId, input.expectedDraftHash);
+  if (!story.draft) throw new Error("A researched draft is required before editing.");
+  const headline = input.headline.trim();
+  const note = input.note.trim();
+  if (!input.humanReviewed || note.length < 10 || note.length > 3000) throw new Error("James must explicitly attest that the headline and each sentence accurately represent the linked evidence, and record the review.");
+  if (headline.length < 5 || headline.length > 160 || !input.sentences.length || input.sentences.length > 40) throw new Error("Provide a headline and between one and 40 sourced paragraphs.");
+  const sentences = input.sentences.map(sentence => ({ text: sentence.text.trim(), claimIds: [...new Set(sentence.claimIds)], humanReviewed: true }));
+  if (sentences.some(sentence => !sentence.text || sentence.text.length > 4000 || !sentence.claimIds.length || sentence.claimIds.length > 12 || !sentence.claimIds.every(id => verifiedClaim(state, story, id)))) throw new Error("Every paragraph needs verified supporting claims from this story; disputed and private reader assertions cannot be promoted by an edit.");
+  if ((input.deck?.length ?? 0) > 600 || (input.dateline?.length ?? 0) > 160 || (input.label && !["opinion", "analysis", "update", "correction", "right_of_reply"].includes(input.label)) || (input.editorialTone && !["A", "B", "N"].includes(input.editorialTone)) || (input.access && !["public", "members"].includes(input.access))) throw new Error("Check the editorial label, deck, dateline, access and internal tone.");
+  if (input.captions?.some(caption => !caption.text.trim() || caption.text.length > 600 || !story.media.some(media => media.id === caption.mediaId && media.allowed) || !caption.sourceIds.length || caption.sourceIds.some(id => !story.sourceItems.includes(id)))) throw new Error("Captions need a cleared image and supporting archived sources.");
+  const draft = { ...structuredClone(story.draft), headline, sentences, body: sentences.map(sentence => sentence.text).join("\n\n"), factReview: { actor: "James" as const, note, reviewedAt: now() }, ...(input.label !== undefined ? { label: input.label } : {}), ...(input.deck !== undefined ? { deck: input.deck.trim() } : {}), ...(input.dateline !== undefined ? { dateline: input.dateline.trim() } : {}), ...(input.captions !== undefined ? { captions: structuredClone(input.captions) } : {}) };
+  if (!quotationBudgetMet(story, draft)) throw new Error("The edited article exceeds the 25-word quotation budget for an archived source. Reduce direct quotations before saving.");
+  const newlyAdverse = input.editorialTone === "B" && story.editorialTone !== "B";
+  if (input.editorialTone) story.editorialTone = input.editorialTone;
+  if (input.access) { draft.access = input.access; story.access = input.access; }
+  replaceDraft(state, story, draft, "James saved an evidence-linked narrative and human review attestation. Publication still requires explicit approval of this exact draft.", newlyAdverse);
+  audit(state, "editorial.draft_edited", `James reviewed headline and ${sentences.length} paragraph(s); draft ${draft.hash}. ${note}`, story.id);
+  return draft;
+}
+
+export function recordRightOfReply(state: NewsroomState, storyId: string, input: Omit<NonNullable<Story["rightOfReply"]>, "recordedAt" | "actor"> & { expectedDraftHash: string }): Story {
+  const story = editableStory(state, storyId, input.expectedDraftHash);
+  if (!story.draft || input.note.trim().length < 10 || input.note.length > 3000 || !["not_required", "requested", "received", "declined", "no_response"].includes(input.status)) throw new Error("Record the right-of-reply decision and editorial reason.");
+  if (input.sourceIds.some(id => !story.sourceItems.includes(id) || !state.sourceItems.some(source => source.id === id)) || (["received", "declined"].includes(input.status) && !input.sourceIds.length)) throw new Error("A received or declined response must link its archived evidence; no response content is invented.");
+  if (input.status !== "not_required" && (!input.recipient?.trim() || !input.requestedAt || !Number.isFinite(Date.parse(input.requestedAt)))) throw new Error("Record who was contacted and when.");
+  if (input.deadline && !Number.isFinite(Date.parse(input.deadline))) throw new Error("Response deadline must be a valid date.");
+  if (input.status === "no_response" && (!input.deadline || Date.parse(input.deadline) > Date.now())) throw new Error("The recorded reply deadline must have elapsed before recording no response.");
+  const { expectedDraftHash: _expectedDraftHash, ...record } = input;
+  story.rightOfReply = { ...structuredClone(record), note: input.note.trim(), actor: "James", recordedAt: now() };
+  replaceDraft(state, story, structuredClone(story.draft), "James updated the right-of-reply record; review the refreshed publication package.");
+  audit(state, "editorial.right_of_reply", `James recorded ${input.status}. ${input.note.trim()}`, story.id);
+  return story;
+}
+
+export function createCorrectionStory(state: NewsroomState, publicationId: string, input: { reason: string; sourceIds?: string[]; headline?: string }): Story {
+  const publication = state.publications.find(item => item.id === publicationId);
+  const original = publication && state.stories.find(item => item.id === publication.storyId);
+  if (!publication || !original) throw new Error("Original publication not found.");
+  const reason = input.reason.trim();
+  if (reason.length < 10 || reason.length > 3000) throw new Error("Describe the published error and the correction needed.");
+  const ids = [...new Set(input.sourceIds?.length ? input.sourceIds : original.sourceItems)];
+  const items = ids.map(id => state.sourceItems.find(item => item.id === id));
+  if (!items.length || items.some(item => !item || (original.mode === "live" && (item.demo || item.url.includes("example.invalid"))))) throw new Error("Correction sources must be archived and use the original publication's mode.");
+  const sources = items as SourceItem[];
+  const title = input.headline?.trim() || `Correction: ${publication.draft.headline}`;
+  if (title.length > 300) throw new Error("Correction title is too long.");
+  const createdAt = now();
+  const id = stableId("correction", `${publication.id}|${reason}|${state.stories.length}`);
+  const story: Story = { id, title, summary: reason, mode: original.mode, status: "candidate", selectedReason: "James requested a correction to an existing publication; the original remains in the audit history.", ...routeStory(sources), sourceItems: ids, claims: [], findings: [], gaps: [], media: [], compliance: [], approvals: [], wagering: original.wagering || isWagering(reason), correctionOf: publication.id, correctionReason: reason, createdAt, updatedAt: createdAt };
+  state.stories.push(story);
+  addGap(state, story, `Correction review: ${reason}`, 2, true, `correction-${publication.id}`);
+  audit(state, "editorial.correction_created", `James requested a correction to ${publication.id}. ${reason}`, story.id);
+  return story;
+}
+
+/** Withdrawal changes visibility/status metadata, never the approved original snapshot. */
+export function setPublicationStatus(state: NewsroomState, publicationId: string, input: { status: "published" | "retracted" | "removed"; note: string }): Publication {
+  const publication = state.publications.find(item => item.id === publicationId);
+  if (!publication) throw new Error("Publication not found.");
+  const note = input.note.trim();
+  if (!["published", "retracted", "removed"].includes(input.status) || note.length < 10 || note.length > 3000) throw new Error("Choose a publication status and record the editorial reason.");
+  if (draftHash(publication.draft) !== publication.draftHash) throw new Error("The original publication snapshot failed its integrity check.");
+  if (input.status === "published" && publication.mode === "live" && !publication.public) throw new Error("A private snapshot cannot be made public through restoration.");
+  if ((publication.status ?? "published") === input.status) return publication;
+  publication.status = input.status;
+  (publication.statusHistory ??= []).push({ status: input.status, note, actor: "James", createdAt: now() });
+  audit(state, `publication.${input.status}`, `James changed publication ${publication.id}: ${note}`, publication.storyId);
+  return publication;
+}
+
+export function setPublicationAccess(state: NewsroomState, publicationId: string, input: { access: "public" | "members"; note: string }): Publication {
+  const publication = state.publications.find(item => item.id === publicationId);
+  if (!publication || !["public", "members"].includes(input.access) || input.note.trim().length < 10 || input.note.length > 3000) throw new Error("Choose an existing publication, its reader access and an editorial reason.");
+  if (publication.mode === "demo" && input.access === "public") throw new Error("Demo publications cannot be exposed as free public samples.");
+  publication.access = input.access;
+  audit(state, "publication.access_changed", `James set ${publication.id} to ${input.access}: ${input.note.trim()}`, publication.storyId);
+  return publication;
 }
 
 async function draftStory(state: NewsroomState, story: Story, provider: ResearchProvider, deadline: number) {
@@ -233,6 +406,7 @@ async function draftStory(state: NewsroomState, story: Story, provider: Research
   if (provider.draft && claims.length && Date.now() < deadline) {
     try {
       const response = await withTimeout(provider.draft({ story: structuredClone(story), sources: structuredClone(sourceItems(state, story)), peAgentId: story.peAgentId }), Math.min(BUDGET.taskTimeoutMs, deadline - Date.now()));
+      story.proposedDraft = { ...structuredClone(response), createdAt: now(), status: "requires_human_review" };
       for (const request of (response.researchRequests ?? []).slice(0, 3)) {
         if ([1, 2, 3, 4, 5, 6].includes(request.agentId) && request.question.trim()) addGap(state, story, request.question, request.agentId, true, `editorial-${request.question}`);
       }
@@ -248,15 +422,17 @@ async function draftStory(state: NewsroomState, story: Story, provider: Research
   if (story.claims.some(c => c.status !== "verified")) limitations.push("Unverified reader allegations, opinions and inferences are retained in the private research Hub and excluded from this article.");
   if (story.media.some(m => !m.allowed)) limitations.push("Unverified images have been omitted.");
   const draft: ArticleDraft = {
-    id: stableId("draft", `${story.id}|${story.approvals.length}|${JSON.stringify(sentences)}`), headline: `${story.mode === "demo" ? "Demo: " : ""}Thoroughbred racing — ${PE_AGENTS[story.peAgentId - 1].name.toLowerCase()} briefing`, byline: `Agent ${story.peAgentId}`, peAgentId: story.peAgentId, sentences, body: sentences.map(s => s.text).join("\n\n"), hash: "", createdAt: now(), limitations,
+    id: stableId("draft", `${story.id}|${story.approvals.length}|${JSON.stringify(sentences)}`), headline: `${story.mode === "demo" ? "Demo: " : ""}Thoroughbred racing — ${PE_AGENTS[story.peAgentId - 1].name.toLowerCase()} briefing`, byline: `Agent ${story.peAgentId}`, peAgentId: story.peAgentId, sentences, body: sentences.map(s => s.text).join("\n\n"), hash: "", createdAt: now(), limitations, access: story.access ?? "members", ...(story.correctionOf ? { label: "correction" } : {}),
   };
   draft.hash = draftHash(draft);
+  invalidateChangedReply(state, story, draft);
+  retainDraft(story);
   story.draft = draft;
   state.runs.push({ id: stableId("run", `${draft.id}|editorial`), storyId: story.id, agentType: "editorial", agentId: story.peAgentId, status: "completed", summary: `${sentences.length} evidence-linked sentences; public byline ${draft.byline}.`, startedAt, finishedAt: now() });
 }
 
-export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | "live"; items: SourceItem[] }, provider?: ResearchProvider, checkpoint?: (state: NewsroomState) => Promise<void>): Promise<void> {
-  const deadline = Date.now() + BUDGET.maxRunMs;
+export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | "live"; items: SourceItem[]; deadline?: number }, provider?: ResearchProvider, checkpoint?: (state: NewsroomState) => Promise<void>, retrieve?: TargetedRetriever): Promise<void> {
+  const deadline = Math.min(Date.now() + BUDGET.maxRunMs, input.deadline ?? Infinity);
   const researcher = provider ?? (input.mode === "demo" ? demoResearchProvider : recordProvider);
   const save = async () => { if (checkpoint) await checkpoint(state); };
   state.lastRunAt = now();
@@ -282,6 +458,11 @@ export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | 
     let story = state.stories.find(s => s.id === id);
     if (story) {
       const hasNewEvidence = items.some(item => !story!.sourceItems.includes(item.id));
+      if (hasNewEvidence && story.status === "published") {
+        const newIds = items.filter(item => !story!.sourceItems.includes(item.id)).map(item => item.id);
+        (story.publishedEvidenceAlerts ??= []).push({ sourceIds: newIds, receivedAt: now(), status: "open" });
+        audit(state, "publication.new_evidence", `New archived evidence may affect the published story: ${newIds.join(", ")}. James must review and create a correction or update if required.`, story.id);
+      }
       if (hasNewEvidence && !["published", "rejected"].includes(story.status) && queue.length >= BUDGET.maxStories && !queue.includes(story)) {
         audit(state, "selection.deferred", `New evidence for ${story.id} remains in the persistent source backlog until research capacity is available.`, story.id);
         if (story.status === "waiting_approval") transition(state, story, "candidate", "The previous approval package is paused until newly received evidence has been researched.");
@@ -328,6 +509,19 @@ export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | 
       await save();
       const followups = [...new Map(story.gaps.filter(g => g.status === "open").map(gap => [`${gap.agentId}|${gap.question}`, gap])).values()].slice(0, 6);
       if (followups.length) {
+        if (retrieve && input.mode === "live" && Date.now() < deadline) {
+          const retrievalDeadline = Math.min(deadline, Date.now() + BUDGET.retrievalTimeoutMs);
+          try {
+            const result = await withTimeout(retrieve({ story: structuredClone(story), questions: followups.map(gap => gap.question), sourceItems: structuredClone(sourceItems(state, story)), maxItems: BUDGET.maxAdditionalSources, deadline: retrievalDeadline }), Math.max(1, retrievalDeadline - Date.now()));
+            const newItems = result.items.filter(item => !story.sourceItems.includes(item.id)).slice(0, BUDGET.maxAdditionalSources);
+            for (const item of newItems) { addSource(state, item, input.mode); story.sourceItems.push(item.id); }
+            for (const error of result.errors ?? []) audit(state, "retrieval.source_failed", `${error.sourceId}: ${error.message}`, story.id);
+            audit(state, "retrieval.completed", `${newItems.length} additional registered-source item(s) archived for targeted evidence questions.`, story.id);
+          } catch (error) {
+            audit(state, "retrieval.failed", error instanceof Error ? error.message : "Targeted collection failed; unresolved questions remain open.", story.id);
+          }
+          await save();
+        }
         transition(state, story, "researching", `${followups.length} targeted gap(s) returned to the appropriate research agents.`);
         await save();
         await Promise.all(followups.map(g => researchTask(state, story, g.agentId, 1, g.question, researcher, deadline)));
@@ -367,7 +561,7 @@ export function decideStory(state: NewsroomState, storyId: string, decision: "ap
   story.approvals.push({ id: stableId("approval", `${story.id}|${story.approvals.length}|${decision}`), decision, note: note.slice(0, 3000), actor: "James", draftHash: story.draft?.hash ?? null, wageringAcknowledged, createdAt });
   audit(state, `approval.${decision}`, note || `James selected ${decision}.`, story.id);
   if (decision === "approve" && story.draft) {
-    state.publications.push({ id: stableId("publication", `${story.id}|${story.draft.hash}`), storyId: story.id, mode: story.mode, public: story.mode === "live", draftHash: story.draft.hash, draft: structuredClone(story.draft), approvedBy: "James", approvedAt: createdAt, publishedAt: createdAt });
+    state.publications.push({ id: stableId("publication", `${story.id}|${story.draft.hash}`), storyId: story.id, mode: story.mode, public: story.mode === "live", draftHash: story.draft.hash, draft: structuredClone(story.draft), approvedBy: "James", approvedAt: createdAt, publishedAt: createdAt, status: "published", access: story.draft.access ?? "members", ...(story.correctionOf ? { correctionOf: story.correctionOf, correctionReason: story.correctionReason } : {}) });
     transition(state, story, "published", story.mode === "demo" ? "Private demo publication simulated after James's approval." : "Exact approved article snapshot published after James's approval.");
   } else if (decision === "reject") transition(state, story, "rejected", "James rejected this package.");
   else if (decision === "send_back") {

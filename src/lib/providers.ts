@@ -148,10 +148,10 @@ class GatewayProvider implements ResearchProvider {
     const claims = request.story.claims.filter((claim) => claim.status === "verified").slice(0, 16).map((claim) => ({ id: claim.id, text: claim.text, verificationScope: claim.verificationScope }));
     if (!claims.length) throw new Error("Editorial writing requires verified Hub claims");
     const result = await this.complete(draftSchema, "editorial",
-      EDITORIAL_DISCIPLINES[request.peAgentId] + "\nWrite exclusively from the supplied Hub claims. In this first version each sentence.text must copy exactly one entire claim.text verbatim and its claimIds must contain that claim's ID only. Select and order the supported claims into a coherent brief; do not rewrite them, add connective factual wording, or strengthen qualifications. Use a neutral headline such as Racing records update. Request precise missing evidence with the most relevant Research Agent number. The public byline is Agent " + request.peAgentId + ". Do not publish, approve, clear legal review or claim imagery is verified.",
+      EDITORIAL_DISCIPLINES[request.peAgentId] + "\nPropose a clear, specific headline and readable narrative solely from the supplied Hub claims. Every sentence needs the IDs of all claims supporting it. Keep assertions attributed; source-statement verification does not prove the underlying event. Do not invent facts, quotes, context or links. Your narrative and headline are proposals requiring James's explicit human fact review; they cannot replace the safe source-quotation draft automatically. Request precise missing evidence with the most relevant Research Agent number. The public byline is Agent " + request.peAgentId + ". Do not publish, approve, attest human review, clear legal review or claim imagery is verified.",
       { claims, gaps: request.story.gaps.filter((gap) => gap.status === "open").slice(0, 8).map(({ question, agentId }) => ({ question, agentId })) });
     for (const sentence of result.sentences) {
-      if (sentence.claimIds.length !== 1 || !claims.some((claim) => claim.id === sentence.claimIds[0] && claim.text === sentence.text)) throw new Error("Editorial sentence does not exactly match a verified Hub claim");
+      if (!sentence.claimIds.length || !sentence.claimIds.every(id => claims.some(claim => claim.id === id))) throw new Error("Editorial proposal cites an unknown verified Hub claim");
     }
     return result as DraftResult;
   }

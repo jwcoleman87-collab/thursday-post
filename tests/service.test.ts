@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {randomBytes} from 'node:crypto';
 import {closeStore,readStore,transact} from '../src/lib/store';
+import {closeDocuments} from '../src/lib/durable-store';
 import {handleAction,ingestEmail,publicPayload,startRun} from '../src/lib/service';
 import {parseEmailFile} from '../src/lib/email';
 import {requireOwner,requireSameOrigin,requireCron,signSession,validSession} from '../src/lib/auth';
@@ -16,7 +17,7 @@ delete process.env.VERCEL;
 process.env.AUTH_SECRET=randomBytes(32).toString('hex');
 process.env.ADMIN_PASSWORD=randomBytes(24).toString('hex');
 process.env.LOCAL_DEMO_ACCESS='false';
-after(async()=>{await closeStore();rmSync(folder,{recursive:true,force:true});});
+after(async()=>{await closeDocuments();await closeStore();rmSync(folder,{recursive:true,force:true});});
 
 test('persistent service: GO, restart, reviewed draft hash, private demo publication and deduplication',async()=>{
   await startRun('demo');

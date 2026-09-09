@@ -8,8 +8,14 @@ function equal(a:string,b:string) {
   return timingSafeEqual(createHash('sha256').update(a).digest(),createHash('sha256').update(b).digest());
 }
 export function isLocalAccess(request:Request) {
-  const host=new URL(request.url).hostname;
-  return !process.env.VERCEL && process.env.LOCAL_DEMO_ACCESS==='true' && ['127.0.0.1','localhost','[::1]'].includes(host);
+  if(process.env.VERCEL||process.env.LOCAL_DEMO_ACCESS!=='true')return false;
+  try{
+    const loopback=(hostname:string)=>['127.0.0.1','localhost','[::1]'].includes(hostname);
+    const url=new URL(request.url);
+    const host=new URL(`http://${request.headers.get('host')||url.host}`).hostname;
+    const forwarded=request.headers.get('x-forwarded-host');
+    return loopback(url.hostname)&&loopback(host)&&(!forwarded||forwarded.split(',').every(value=>loopback(new URL(`http://${value.trim()}`).hostname)));
+  }catch{return false;}
 }
 function signingSecret() {
   if (!process.env.AUTH_SECRET || process.env.AUTH_SECRET.length<32) throw new HttpError('Set a strong AUTH_SECRET before enabling hosted access.',503);

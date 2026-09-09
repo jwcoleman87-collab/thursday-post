@@ -1,45 +1,18 @@
-"use client";
+'use client';
+import {useEffect,useState} from 'react';
+import Link from 'next/link';
+import {HeardSomething,PaperFooter,PaperHeader} from './publication-brand';
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
-import { ArrowLeft, ArrowUpRight, BookOpen, Mail } from "lucide-react";
-
-type PublicArticle = {
-  id: string; headline: string; byline: string; section: string; publishedAt: string;
-  paragraphs: { text: string; claimIds: string[] }[];
-  sources: { title: string; url: string }[];
-  limitations?: string[];
-};
-type Edition = { articles: PublicArticle[]; contactEmail: string };
-
-function publicationDate(value: string) {
-  return new Date(value).toLocaleDateString("en-AU", { day: "numeric", month: "long", year: "numeric", timeZone: "Australia/Sydney" });
-}
-
-export default function PublicEdition({ articleId }: { articleId?: string }) {
-  const [edition, setEdition] = useState<Edition | null>(null);
-  const [error, setError] = useState("");
-  useEffect(() => {
-    const controller = new AbortController();
-    fetch("/api/public", { signal: controller.signal, cache: "no-store" })
-      .then(async response => { if (!response.ok) throw new Error("The newspaper could not be loaded. Please try again."); return response.json(); })
-      .then(setEdition)
-      .catch(error => { if (error.name !== "AbortError") setError(error.message); });
-    return () => controller.abort();
-  }, []);
-  const article = edition?.articles.find(item => item.id === articleId);
-  return <main className="public-page">
-    <div className="edition-top"><span>Australian thoroughbred racing</span><Link href="/">Newsroom <ArrowUpRight size={14} /></Link></div>
-    <header className="masthead"><p className="eyebrow">Evidence first. Racing always.</p><Link href="/news"><h1>The Racing Desk<span>.</span></h1></Link><p>People, policy and the stories behind the sport.</p></header>
-    <div className="edition-rule"><span>THE NEWSPAPER</span><span>Researched. Traced. Reviewed.</span></div>
-    {error ? <div className="notice danger" role="alert">{error}</div> : !edition ? <div className="empty-state"><span className="spinner" /><p>Opening the newspaper…</p></div> : articleId ? article ? <article className="published-article">
-      <Link className="text-link" href="/news"><ArrowLeft size={15} /> All stories</Link>
-      <p className="eyebrow">{article.section}</p><h2>{article.headline}</h2>
-      <div className="article-byline">By {article.byline}<span>·</span><time dateTime={article.publishedAt}>{publicationDate(article.publishedAt)}</time></div>
-      <div className="article-body">{article.paragraphs.map((paragraph, index) => <p key={index}>{paragraph.text}</p>)}</div>
-      {article.limitations?.length ? <aside className="article-sources"><h3>Reporting notes</h3>{article.limitations.map((limitation, index) => <p key={index}>{limitation}</p>)}</aside> : null}
-      <aside className="article-sources"><h3>Behind this story</h3><p>Original sources supporting the reporting.</p>{article.sources.map((source, index) => <a key={`${source.url}-${index}`} href={source.url} target="_blank" rel="noopener noreferrer">{source.title}<ArrowUpRight size={16} /></a>)}</aside>
-    </article> : <div className="empty-state"><BookOpen size={32} /><h2>Story not available</h2><p>This story is not in the published edition.</p><Link className="button primary" href="/news">Back to the newspaper</Link></div> : edition.articles.length ? <div className="edition-grid">{edition.articles.map((item, index) => <article key={item.id} className={index === 0 ? "edition-story lead-story" : "edition-story"}><p className="eyebrow">{item.section}</p><Link href={`/news/${encodeURIComponent(item.id)}`}><h2>{item.headline}</h2></Link><p>{item.paragraphs[0]?.text}</p><div className="article-byline">By {item.byline}<span>·</span>{publicationDate(item.publishedAt)}</div><Link className="text-link" href={`/news/${encodeURIComponent(item.id)}`}>Read the story <ArrowUpRight size={16} /></Link></article>)}</div> : <div className="first-edition"><span className="edition-emblem"><BookOpen size={34} strokeWidth={1.4} /></span><p className="eyebrow">The first edition</p><h2>Good reporting starts<br />with the evidence.</h2><p>Our Australian thoroughbred racing newsroom is preparing its first stories. Every article is researched, traced to its sources and reviewed before publication.</p><div className="small-rule" /><p className="quiet">Published stories will appear here after editorial approval.</p></div>}
-    <footer className="public-footer"><div><strong>The Racing Desk.</strong><p>Independent thinking. Accountable reporting.</p></div><div>{edition?.contactEmail ? <><a className="text-link" href={`mailto:${edition.contactEmail}`}><Mail size={16} /> Contact the newsroom</a><p>Tips, questions and corrections welcome.</p></> : <p>Reader correspondence is being configured.</p>}</div></footer>
-  </main>;
+type Article={id:string;headline:string;byline:string;section:string;publishedAt:string;paragraphs:{text:string;claimIds:string[]}[];sources:{title:string;url:string}[];limitations?:string[];excerpt?:string;locked?:boolean;status?:string;correctionOf?:string;notice?:string;deck?:string;label?:string;};
+type Paper={articles:Article[];contactEmail:string;memberAccess?:boolean};
+function date(value:string){return new Date(value).toLocaleDateString('en-AU',{day:'numeric',month:'long',year:'numeric',timeZone:'Australia/Sydney'});}
+function Byline({article}:{article:Article}){return <div className="paper-byline">By {article.byline.replace(/^By\s+/i,'')}<span> / </span><time dateTime={article.publishedAt}>{date(article.publishedAt)}</time></div>;}
+function Story({article,lead=false}:{article:Article;lead?:boolean}){return <article className={`paper-story ${lead?'paper-lead':''}`}><p className="paper-kicker">{article.label?.replaceAll('_',' ')||article.section}</p><h2><Link href={`/news/${encodeURIComponent(article.id)}`}>{article.headline}</Link></h2>{article.deck?<p className="paper-deck">{article.deck}</p>:null}<p className="paper-excerpt">{article.excerpt||article.paragraphs[0]?.text}</p><Byline article={article}/><Link className="paper-continue" href={`/news/${encodeURIComponent(article.id)}`}>Continue reading ↗</Link></article>;}
+export default function PublicEdition({articleId,correctionsOnly=false}:{articleId?:string;correctionsOnly?:boolean}){
+  const[paper,setPaper]=useState<Paper|null>(null);const[error,setError]=useState('');
+  useEffect(()=>{const controller=new AbortController();fetch('/api/public',{signal:controller.signal,cache:'no-store'}).then(async r=>{if(!r.ok)throw new Error('The newspaper is temporarily unavailable. Please try again.');return r.json();}).then(setPaper).catch(e=>{if(e.name!=='AbortError')setError(e.message);});return()=>controller.abort();},[]);
+  const all=paper?.articles||[];const articles=correctionsOnly?all.filter(a=>a.correctionOf||a.notice||a.status==='retracted'||a.label==='update'||a.label==='correction'):all.filter(a=>a.status!=='retracted');const article=all.find(a=>a.id===articleId);
+  return <main className="paper"><PaperHeader/><div className="paper-dateline"><span>{correctionsOnly?'CORRECTIONS & UPDATES':'THE FRONT PAGE'}</span><span>{all[0]?date(all[0].publishedAt):'Preparing the first edition'}</span><span>THOROUGHBRED RACING</span></div>
+    {error?<div className="paper-message" role="alert">{error}</div>:!paper?<p className="paper-message" role="status">Opening the newspaper…</p>:articleId?article?<article className="paper-article"><Link className="paper-continue" href="/">← Front page</Link><p className="paper-kicker">{article.label?.replaceAll('_',' ')||article.section}</p><h1>{article.headline}</h1>{article.deck?<p className="paper-deck">{article.deck}</p>:null}<Byline article={article}/>{article.notice?<aside className="paper-correction"><strong>{article.status==='retracted'?'Retraction':'Correction / update'}</strong><p>{article.notice}</p>{article.correctionOf?<Link href={`/news/${article.correctionOf}`}>Read the original report</Link>:null}</aside>:null}<div className="paper-body">{article.paragraphs.map((p,i)=><p key={i}>{p.text}</p>)}</div>{article.locked?<aside className="paper-paywall"><p className="paper-kicker">CONTINUE WITH THURSDAY POST</p><h2>The whole story. Every Thursday.</h2><p>{article.excerpt}</p><p>This article is for subscribers. Sign in to read the complete reporting and its sources.</p><Link className="paper-button" href="/member">Subscriber sign in ↗</Link><Link href="/subscribe">See the subscription</Link></aside>:<>{article.limitations?.length?<aside className="paper-reporting"><h2>Editorial notes</h2>{article.limitations.map((text,i)=><p key={i}>{text}</p>)}</aside>:null}{article.sources.length?<aside className="paper-reporting"><h2>Sources &amp; further reading</h2>{article.sources.map(s=><a key={s.url} href={s.url} rel="noopener noreferrer" target="_blank">{s.title} ↗</a>)}</aside>:null}</>}</article>:<section className="paper-message"><h1>Story unavailable</h1><p>This report is not available in the current publication.</p><Link href="/">Return to the front page</Link></section>:articles.length?<div className="paper-front"><div className="paper-main-column"><Story article={articles[0]} lead/>{articles[1]?<Story article={articles[1]}/>:null}</div><div className="paper-second-column">{articles.slice(2,5).map(a=><Story key={a.id} article={a}/>)}{articles.length<3?<section className="paper-editorial-note"><p className="paper-kicker">FROM THE EDITOR</p><h2>Racing is more than the result.</h2><p>The people. The decisions. The stories behind the sport. Thursday Post follows the evidence and gives those stories room.</p><Link className="paper-continue" href="/about">Our editorial standards ↗</Link></section>:null}</div><aside className="paper-briefs"><p className="paper-column-label">THE POST</p>{articles.slice(5).map(a=><Story key={a.id} article={a}/>)}<section><h2>Your Thursday, considered.</h2><p>A publication for people who care about Australian racing.</p><Link className="paper-continue" href="/subscribe">Read with us ↗</Link></section><section><h3>Post Box</h3><p>Letters, local knowledge and things worth looking into.</p><Link className="paper-continue" href="/post-box">Write to the Post ↗</Link></section></aside></div>:<section className="paper-opening"><div><p className="paper-kicker">{correctionsOnly?'THE PERMANENT RECORD':'A NEW VOICE IN AUSTRALIAN RACING'}</p><h1>{correctionsOnly?'Corrections belong in the open.':'The stories behind the sport.'}</h1><p className="paper-deck">{correctionsOnly?'There are no published corrections or updates yet.':'People. Policy. Places. The things that matter long after the last race.'}</p><p>{correctionsOnly?'When a published story requires a correction, clarification or update, the notice will appear here and alongside the affected reporting.':'Thursday Post is preparing its first edition. Our reporting starts with sources, takes questions seriously and reaches readers after editorial review.'}</p><Link className="paper-continue" href={correctionsOnly?'/':'/about'}>{correctionsOnly?'Return to the front page':'Meet the Thursday Post'} ↗</Link></div><aside><p className="paper-kicker">COMING TO THE POST</p><h2>A wider view of racing.</h2><p>Industry and governance. The people who make racing happen. Regional voices. A place for readers to be heard.</p><div className="paper-rule"/><h3>First edition</h3><p>Publication follows editorial approval. We will announce the subscription offer when it is ready.</p><Link className="paper-button" href="/subscribe">Subscription information ↗</Link></aside></section>}
+    <HeardSomething/><PaperFooter/></main>;
 }

@@ -1,5 +1,5 @@
-import Newsroom from "@/components/newsroom";
+import PublicEdition from "@/components/public-edition";
 
 export default function Home() {
-  return <Newsroom />;
+  return <PublicEdition />;
 }

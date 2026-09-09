@@ -4,7 +4,7 @@ import { request } from "node:https";
 import { isIP } from "node:net";
 import { load } from "cheerio";
 import { XMLParser } from "fast-xml-parser";
-import type { SourceItem, SourceType } from "./domain";
+import type { SourceItem, SourceType, TargetedRetriever } from "./domain";
 
 export const FETCH_LIMIT = 2 * 1024 * 1024;
 const USER_AGENT = "RacingNewsroom/1.0";
@@ -189,24 +189,29 @@ export function getSourceRegistry(): RegisteredSource[] {
   ].map((source) => ({ ...source, enabled: enabled.has(source.id), termsReviewedAt: reviewed })) as RegisteredSource[];
 }
 
-export async function collectSourceItems(options: { sources?: RegisteredSource[]; maxSources?: number; maxItemsPerSource?: number } = {}): Promise<{ items: SourceItem[]; errors: { sourceId: string; message: string }[] }> {
+export async function collectSourceItems(options: { sources?: RegisteredSource[]; maxSources?: number; maxItemsPerSource?: number; deadline?: number; fetchText?: typeof safeFetchText } = {}): Promise<{ items: SourceItem[]; errors: { sourceId: string; message: string }[] }> {
   const items: SourceItem[] = [];
   const errors: { sourceId: string; message: string }[] = [];
   const sources = (options.sources ?? getSourceRegistry()).filter((source) => source.enabled).slice(0, Math.min(options.maxSources ?? 3, 6));
   if (!sources.length) return { items, errors: [{ sourceId: "configuration", message: "No live sources enabled. Review source access/terms, then set NEWSROOM_ENABLED_SOURCES and NEWSROOM_SOURCE_REVIEWED_AT." }] };
   const maximum = Math.max(1, Math.min(options.maxItemsPerSource ?? 3, 6));
+  const fetchWithinBudget: typeof safeFetchText = (url, hosts, fetchOptions = {}) => {
+    const remaining = (options.deadline ?? (Date.now() + 15_000)) - Date.now();
+    if (remaining <= 0) throw new Error("Source collection deadline exhausted");
+    return (options.fetchText ?? safeFetchText)(url, hosts, { ...fetchOptions, timeoutMs: Math.max(1, Math.min(15_000, remaining)) });
+  };
   for (const source of sources) {
     try {
       if (!source.termsReviewedAt || !Number.isFinite(Date.parse(source.termsReviewedAt)) || Date.parse(source.termsReviewedAt) > Date.now()) throw new Error("Source access and terms review is missing or invalid");
       const sourceUrl = validateSourceUrl(source.url, source.allowedHosts);
-      const robots = await safeFetchText(new URL("/robots.txt", sourceUrl).href, source.allowedHosts, { maxBytes: 256_000, allow404: true });
+      const robots = await fetchWithinBudget(new URL("/robots.txt", sourceUrl).href, source.allowedHosts, { maxBytes: 256_000, allow404: true });
       const permitted = (url: string) => {
         const target = validateSourceUrl(url, source.allowedHosts);
         // Each origin needs its own robots policy; do not follow links to other origins.
         if (target.origin !== sourceUrl.origin || !robotsAllows(robots.body, target.pathname + target.search)) throw new Error("Source robots policy or origin restriction disallows this URL");
       };
       permitted(source.url);
-      const fetched = await safeFetchText(source.url, source.allowedHosts, { validateUrl: (url) => permitted(url.href) });
+      const fetched = await fetchWithinBudget(source.url, source.allowedHosts, { validateUrl: (url) => permitted(url.href) });
       permitted(fetched.url);
       const retrievedAt = new Date().toISOString();
       let entries: ParsedSourceEntry[];
@@ -221,7 +226,7 @@ export async function collectSourceItems(options: { sources?: RegisteredSource[]
         for (const url of urls) {
           try {
             permitted(url);
-            const article = await safeFetchText(url, source.allowedHosts, { validateUrl: (target) => permitted(target.href) });
+            const article = await fetchWithinBudget(url, source.allowedHosts, { validateUrl: (target) => permitted(target.href) });
             permitted(article.url);
             if (!/text\/html/i.test(article.contentType)) throw new Error("Article did not return HTML");
             const page = load(article.body);
@@ -252,4 +257,28 @@ export async function collectSourceItems(options: { sources?: RegisteredSource[]
     } catch (error) { errors.push({ sourceId: source.id, message: error instanceof Error ? error.message : "Source collection failed" }); }
   }
   return { items, errors };
+}
+
+/** Fresh targeted collection is restricted to owner-enabled, reviewed sources; model URLs are never fetched. */
+export function createTargetedRetriever(sources: RegisteredSource[], options: { fetchText?: typeof safeFetchText } = {}): TargetedRetriever {
+  const registered = structuredClone(sources);
+  return async request => {
+    const maximum = Math.max(0, Math.min(2, Math.floor(request.maxItems)));
+    if (!maximum || Date.now() >= request.deadline) return { items: [], errors: [{ sourceId: "budget", message: "Targeted retrieval budget exhausted." }] };
+    const query = `${request.story.title} ${request.questions.join(" ")}`.toLowerCase();
+    const knownOrigins = new Set(request.sourceItems.map(item => item.independenceKey));
+    const ranked = registered.filter(source => source.enabled).map(source => ({ source, score: (source.type === "official" || source.type === "data" ? 4 : 0) + (query.includes(source.region.toLowerCase()) ? 3 : 0) + (!knownOrigins.has(source.id) ? 2 : 0) })).sort((a, b) => b.score - a.score).slice(0, maximum).map(item => item.source);
+    const result = await collectSourceItems({ sources: ranked, maxSources: maximum, maxItemsPerSource: 1, deadline: Math.min(request.deadline, Date.now() + 20_000), fetchText: options.fetchText });
+    const ignored = new Set(["the", "and", "for", "with", "from", "that", "this", "racing", "thoroughbred", "authority", "official", "record", "records", "update", "correction", "briefing", "news"]);
+    const terms = [...new Set(request.story.title.toLowerCase().match(/[a-z]{3,}/g) ?? [])].filter(term => !ignored.has(term));
+    const knownIds = new Set(request.sourceItems.map(item => item.id));
+    const items = result.items.filter(item => {
+      if (knownIds.has(item.id)) return false;
+      const text = `${item.title} ${item.content}`.toLowerCase();
+      const matches = terms.filter(term => new RegExp(`\\b${term}\\b`).test(text));
+      return matches.length >= Math.min(2, terms.length) && terms.length > 0;
+    }).slice(0, maximum);
+    if (!items.length) result.errors.push({ sourceId: "relevance", message: "No additional relevant material was found in the bounded registered sources. Evidence questions remain open." });
+    return { items, errors: result.errors };
+  };
 }
