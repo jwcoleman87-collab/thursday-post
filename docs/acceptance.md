@@ -20,7 +20,7 @@ Tests use temporary databases, synthetic records and controlled provider transpo
 | Recovery | Private export, integrity checks, populated newsroom/document round-trip, CLI restore and refusal to overwrite source/existing targets |
 | Scheduler/auth | Protected owner actions, same-origin checks, paused-AI nonmutation and authorized-queue processing while monitoring is paused |
 
-GitHub CI now defines install, typecheck, tests and production build. A workflow file is not evidence that a hosted run completed.
+[GitHub Actions run 34366126685](https://github.com/jwcoleman87-collab/thursday-post/actions/runs/34366126685) passed clean install, route type generation, TypeScript, all 107 tests and the production build for application revision 39c8026. Final Vercel deployment dpl_7VqJDU4Uh3wjBiGvaP56RW6kgG89 is READY and serves the production alias. Subsequent documentation-only changes do not alter the tested application.
 
 ## Live connections and release work pending
 

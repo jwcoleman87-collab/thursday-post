@@ -31,9 +31,9 @@ Application implementation is deployed and verified. The project is not open for
 - Website: https://the-racing-desk.vercel.app ; owner /newsroom ; operations /operations ; paper /news.
 - Branch codex/launch-build incorporates newer origin/master homepage commits through 45e317f. No existing work was discarded.
 - CLI deployments remain explicit. GitHub Actions runs checks; it does not auto-deploy unreviewed changes against live data.
-- Current application deployment verified: dpl_7xQtAo9umprXEmMuRKLQ6Aqsm8vk. Final documentation/upload/CI and a minor price-display polish are being closed out.
+- Final application deployment: dpl_7VqJDU4Uh3wjBiGvaP56RW6kgG89 (READY), revision 39c8026. GitHub Actions run 34366126685 passed clean install, typecheck, all 107 tests and build. Code and guides have been uploaded to master and codex/launch-build.
 
 ## Remaining work needs external inputs
 Stripe sign-in/verification and keys, monthly price, domain and verified Resend sending/receiving, Gmail forwarding, AI verification/budget/activation, commercial business/hosting/rights details, exact design template/artwork, genuine editorial trial editions and pilot customers. Provider-backed purchase/payout/delivery tests must follow those connections. Offsite retention/backups and remote Postgres restoration are still operating setup work.
 
-Overnight heartbeat: finish-thursday-post-overnight. Pause after the final source upload/verification; resume when James supplies actionable inputs. Do not spend repeated runs restating unchanged dependencies.
+Overnight heartbeat: finish-thursday-post-overnight. The scheduled follow-up is being paused after successful upload and verification; resume when James supplies actionable inputs. Do not spend repeated runs restating unchanged dependencies.

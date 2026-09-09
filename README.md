@@ -55,4 +55,4 @@ Research is bounded to three stories, two rounds and registered sources. License
 
 Local data and backups contain private evidence and member records. Do not commit or share them. Export through the owner endpoint or documented CLI; restore only into a new isolated target.
 
-[Acceptance](docs/acceptance.md) separates fixture coverage from live verification. [Architecture](docs/architecture.md) records backend contracts. GitHub CI now defines install, typecheck, tests and production build; its hosted execution has not been verified for this candidate.
+[Acceptance](docs/acceptance.md) separates fixture coverage from live verification. [Architecture](docs/architecture.md) records backend contracts. [GitHub Actions verification](https://github.com/jwcoleman87-collab/thursday-post/actions/runs/34366126685) passed on the deployed application source: clean install, route type generation, TypeScript, all 107 tests and production build.
