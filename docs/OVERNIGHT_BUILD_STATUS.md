@@ -2,6 +2,16 @@
 
 Application implementation is deployed and verified. The project is not open for paying customers: the remaining account, price and publisher decisions are listed in MORNING_START.md and LAUNCH_CHECKLIST.md.
 
+## AI activation follow-up — 10 September
+
+James requested prioritising AI/research/PE operation and setting Stripe aside. This supersedes the earlier decision to defer AI activation, but does not authorise an unspecified paid budget or top-ups. A fresh project OIDC preflight returned HTTP 403 `customer_verification_required`; Vercel login/card verification is pending. AI remains paused until that access test succeeds.
+
+Hosted source collection succeeded again, adding one record (three real records now archived). Daily monitoring is enabled; the existing cron collects sources while AI is paused. Nothing was published or emailed. The first scheduled invocation after enabling has not yet been observed.
+
+Fixed PE failure reporting so a quotation fallback cannot be recorded as a completed AI editor call. Added five controlled adapter-to-engine integration tests covering every research role and PE desk, ordering, evidence and failure gates; 113 total tests and the production build pass. The live verification script now requires actual successful preflight/research/editorial usage, a PE proposal, no fresh operational failures and an unchanged public article count. Controlled tests do not prove live provider operation; the hosted live run is still pending access.
+
+The earlier evidence and authorisation below record the overnight state; this follow-up takes precedence for AI activation and monitoring.
+
 ## Authorisation that remains in force
 - Only Thursday Post work. Reader contact is workbenchadmin@gmail.com; infrastructure identities stay unchanged.
 - Sales must remain closed until James chooses/validates the monthly AUD price and explicitly opens them.

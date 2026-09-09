@@ -282,3 +282,29 @@ test("persistent deferred demo sources are excluded from a later live discovery 
   assert.equal(live[0].status, "waiting_approval");
   assert.deepEqual(live[0].sourceItems, ["live-primary-1"]);
 });
+
+test("PE provider failure is recorded despite its safe fallback, and a later revision has a distinct successful run", async () => {
+  const state = createState();
+  const item = source();
+  const provider: ResearchProvider = {
+    async research() { return { findings: [{ text: item.content, kind: "record_statement", sourceIds: [item.id], quote: "No rule change has been adopted.", confidence: "high" }] }; },
+    async draft() { throw new Error("Temporary PE outage"); },
+  };
+  await runNewsroom(state, { mode: "live", items: [item] }, provider);
+  const story = state.stories[0];
+  const failed = state.runs.filter(run => run.agentType === "editorial");
+  assert.equal(failed.length, 1);
+  assert.equal(failed[0].status, "failed");
+  assert.ok(story.draft?.sentences.length, "Safe, evidence-linked fallback remains reviewable");
+  assert.equal(story.proposedDraft, undefined);
+  assert.equal(state.publications.length, 0);
+  decideStory(state, story.id, "send_back", "Retry the PE editor after its temporary outage.", false);
+  provider.draft = async ({ story: current }) => ({ headline: "Consultation update", sentences: [{ text: current.claims[0].text, claimIds: [current.claims[0].id] }], researchRequests: [] });
+  await runNewsroom(state, { mode: "live", items: [] }, provider);
+  const editorialRuns = state.runs.filter(run => run.agentType === "editorial");
+  assert.equal(editorialRuns[0].status, "failed", "Keep historical failure evidence");
+  assert.equal(editorialRuns.at(-1)?.status, "completed");
+  assert.equal(new Set(editorialRuns.map(run => run.id)).size, editorialRuns.length);
+  assert.ok(state.stories[0].proposedDraft?.sentences.length);
+  assert.equal(state.publications.length, 0);
+});

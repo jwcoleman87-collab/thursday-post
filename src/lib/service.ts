@@ -149,7 +149,7 @@ export async function startRun(mode:'demo'|'live',services:RunServices={}) {
     state.audit.push(event('run_finished',`${mode} run finished. Ready stories await James; unresolved evidence remains labelled.`));
     await checkpoint(state);
     const failedTasks=state.runs.some(run=>!previousAgentRuns.has(run.id)&&run.status==='failed');
-    await finishRunRecord(leaseId,{status:failedTasks?'failed':'completed',...(failedTasks?{error:new Error('Research task failure')}:{}),usage:provider?.usage});
+    await finishRunRecord(leaseId,{status:failedTasks?'failed':'completed',...(failedTasks?{error:new Error('Research or editorial task failure')}:{}),usage:provider?.usage});
   } catch(error) {
     if(recorded)await finishRunRecord(leaseId,{status:'failed',error,usage:provider?.usage});
     const failure=error instanceof GatewayAccessError?new HttpError(error.message,503):error;

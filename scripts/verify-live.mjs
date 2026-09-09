@@ -36,11 +36,32 @@ if(process.argv.includes('--verify-launch')){
   console.log(JSON.stringify(summary,null,2));
 }
 if(process.argv.includes('--run-live')) {
+  const previousAgentRunIds=new Set(initial.state.runs.map(run=>run.id));
+  const previousAuditIds=new Set(initial.state.audit.map(entry=>entry.id));
+  const operationsBefore=await fetch(`${base}/api/owner/operations`,{headers:{Cookie:cookie}});
+  assert.equal(operationsBefore.status,200);
+  const previousOperationIds=new Set((await operationsBefore.json()).runs.map(run=>run.id));
   const run=await fetch(`${base}/api/newsroom`,{method:'POST',headers:{'Content-Type':'application/json',Origin:base,Cookie:cookie},body:JSON.stringify({action:'run',mode:'live'}),signal:AbortSignal.timeout(300000)});
   const result=await run.json();
   assert.equal(run.status,200,result.error||'Live GO failed');
   const after=await (await fetch(`${base}/api/public`)).json();
   assert.equal(after.articles.length,publicBefore.articles.length,'GO must never publish');
+  assert.equal(result.config.running,false,'GO must release its lease');
+  const freshRuns=result.state.runs.filter(item=>!previousAgentRunIds.has(item.id));
+  assert.ok(freshRuns.some(item=>item.agentType==='research'&&item.status==='completed'),'A real researcher must complete; HTTP 200 alone is insufficient');
+  assert.ok(freshRuns.some(item=>item.agentType==='editorial'&&item.status==='completed'),'A PE editor must complete');
+  assert.ok(freshRuns.every(item=>item.status==='completed'),'Fresh agent runs must have no operational failures');
+  const freshFailures=result.state.audit.filter(entry=>!previousAuditIds.has(entry.id)&&['editorial.provider_failed','run_failed','research.attempt_failed'].includes(entry.action));
+  assert.equal(freshFailures.length,0,'A failed model call or fallback cannot count as an AI success');
+  const touchedIds=new Set(freshRuns.map(item=>item.storyId));
+  const stories=result.state.stories.filter(story=>story.mode==='live'&&touchedIds.has(story.id));
+  assert.ok(stories.some(story=>story.claims.some(claim=>claim.status==='verified')&&story.draft?.sentences.length&&story.proposedDraft?.sentences.length),'Require verified evidence, a safe draft and an actual PE model proposal');
+  const operationsResponse=await fetch(`${base}/api/owner/operations`,{headers:{Cookie:cookie}});
+  assert.equal(operationsResponse.status,200);
+  const operation=(await operationsResponse.json()).runs.find(item=>!previousOperationIds.has(item.id)&&item.mode==='live');
+  assert.ok(operation,'The hosted run must have a new durable operations record');
+  assert.equal(operation.status,'completed');
+  for(const stage of ['preflight','research','editorial'])assert.ok(operation.usage.some(item=>item.stage===stage&&item.inputTokens>0&&item.outputTokens>0),`Require actual ${stage} model usage`);
   const summary={testedAt:new Date().toISOString(),url:base,anonymousStatus:anonymous.status,loginStatus:login.status,goStatus:run.status,stories:result.state.stories.map(story=>({id:story.id,status:story.status,mode:story.mode,claims:story.claims.length,verifiedClaims:story.claims.filter(claim=>claim.status==='verified').length,openGaps:story.gaps.filter(gap=>gap.status==='open').map(gap=>gap.question)})),publicArticles:after.articles.length,failures:result.state.audit.filter(entry=>entry.action.includes('failed')).map(entry=>({action:entry.action,detail:entry.detail}))};
   writeFileSync('artifacts/live-verification.json',JSON.stringify(summary,null,2));
   console.log(JSON.stringify(summary,null,2));

@@ -403,6 +403,7 @@ async function draftStory(state: NewsroomState, story: Story, provider: Research
     return true;
   });
   let sentences = quotable.slice(0, 6).map(c => ({ text: c.text, claimIds: [c.id] }));
+  let providerFailed = false;
   if (provider.draft && claims.length && Date.now() < deadline) {
     try {
       const response = await withTimeout(provider.draft({ story: structuredClone(story), sources: structuredClone(sourceItems(state, story)), peAgentId: story.peAgentId }), Math.min(BUDGET.taskTimeoutMs, deadline - Date.now()));
@@ -414,6 +415,7 @@ async function draftStory(state: NewsroomState, story: Story, provider: Research
       if (candidate?.length && candidate.length <= 8 && new Set(candidate.flatMap(s => s.claimIds)).size === candidate.length && candidate.every(s => s.claimIds?.length === 1 && quotable.some(c => c.id === s.claimIds[0] && c.text === s.text))) sentences = candidate;
       else audit(state, "editorial.unsupported_draft_rejected", "Provider wording was not a verbatim verified Hub claim. Used the evidence-bound briefing draft.", story.id);
     } catch (error) {
+      providerFailed = true;
       audit(state, "editorial.provider_failed", `Used verified-quotation draft after provider error: ${error instanceof Error ? error.message : "unknown error"}`, story.id);
     }
   }
@@ -428,7 +430,7 @@ async function draftStory(state: NewsroomState, story: Story, provider: Research
   invalidateChangedReply(state, story, draft);
   retainDraft(story);
   story.draft = draft;
-  state.runs.push({ id: stableId("run", `${draft.id}|editorial`), storyId: story.id, agentType: "editorial", agentId: story.peAgentId, status: "completed", summary: `${sentences.length} evidence-linked sentences; public byline ${draft.byline}.`, startedAt, finishedAt: now() });
+  state.runs.push({ id: stableId("run", `${draft.id}|editorial|${state.runs.length}`), storyId: story.id, agentType: "editorial", agentId: story.peAgentId, status: providerFailed ? "failed" : "completed", summary: providerFailed ? "PE model request failed. The verified-quotation briefing is retained for private review; the AI editorial stage needs another attempt." : `${sentences.length} evidence-linked sentences; public byline ${draft.byline}.`, startedAt, finishedAt: now() });
 }
 
 export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | "live"; items: SourceItem[]; deadline?: number }, provider?: ResearchProvider, checkpoint?: (state: NewsroomState) => Promise<void>, retrieve?: TargetedRetriever): Promise<void> {
