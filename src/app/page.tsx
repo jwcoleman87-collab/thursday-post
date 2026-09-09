@@ -1,5 +1,3 @@
-import PublicEdition from "@/components/public-edition";
-
-export default function Home() {
-  return <PublicEdition />;
-}
+import SubscribeLanding from "@/components/subscribe-landing";
+import "./landing.css";
+export default function Home(){return <SubscribeLanding/>;}

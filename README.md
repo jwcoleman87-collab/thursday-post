@@ -23,11 +23,12 @@ npm run build
 npm start
 ```
 
-The server binds to loopback. Open the [reader front page](http://127.0.0.1:3000/) or [owner newsroom](http://127.0.0.1:3000/newsroom). Setup creates initial local credentials without overwriting existing configuration. `LOCAL_DEMO_ACCESS=true` is restricted to local loopback access and disabled on Vercel; use `/login` to exercise owner authentication.
+The server binds to loopback. Open the [subscription homepage](http://127.0.0.1:3000/), [newspaper](http://127.0.0.1:3000/news) or [owner newsroom](http://127.0.0.1:3000/newsroom). The homepage preserves the incoming subscription landing design and shows actual signup/sales readiness. Setup creates initial local credentials without overwriting existing configuration. `LOCAL_DEMO_ACCESS=true` is restricted to local loopback access and disabled on Vercel; use `/login` to exercise owner authentication.
 
 | Route | Purpose |
 |---|---|
-| `/`, `/news`, `/news/[id]` | Front page, newspaper alias and stories |
+| `/` | Subscription landing page with actual signup/sales status |
+| `/news`, `/news/[id]` | Newspaper front page and stories |
 | `/newsroom` | Research, collection, evidence, inbox and approval |
 | `/editorial/[id]` | Narrative editing, gap resolution and right of reply |
 | `/operations` | Billing, edition release/SEND, health and backup |

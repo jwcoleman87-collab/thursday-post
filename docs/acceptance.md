@@ -2,7 +2,7 @@
 
 **Current repository: 106/106 automated tests passed; TypeScript passed.** The expanded production build is in progress. Browser QA and deployment verification remain pending. Earlier hosted checks applied to the previous release and must not be presented as acceptance of this candidate.
 
-The existing [Vercel project](https://the-racing-desk.vercel.app), repository identity and Sydney Neon configuration are unchanged. Readers enter at `/`; owners work at `/newsroom`. No new production publication, customer charge or outbound campaign has been verified during this build.
+The existing [Vercel project](https://the-racing-desk.vercel.app), repository identity and Sydney Neon configuration are unchanged. `/` preserves the incoming subscription landing design with real signup/sales status; `/news` is the newspaper. Owners work at `/newsroom`. No new production publication, customer charge or outbound campaign has been verified during this build.
 
 ## Automated evidence
 

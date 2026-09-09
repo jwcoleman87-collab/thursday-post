@@ -4,7 +4,7 @@ Improve presentation while preserving application contracts. Read [DESIGN_PRODUC
 
 **Brand:** Thursday Post. Motto: “collect, aggregate, distribute.” Thursday is one horse standing at one timber post, reins loosely tied, no person. Use an understated, familiar silhouette. Keep existing repository/Vercel identities and [hosted address](https://the-racing-desk.vercel.app). Reader email: workbenchadmin@gmail.com.
 
-**Screens:** Reader `/` (`/news` alias), story `/news/[id]`, editions `/editions` and `/editions/[id]`; signup/offer `/subscribe`, account/sign-in `/member`. Owner `/newsroom`, `/editorial/[id]`, `/operations`, `/login`. Preserve corrections, Post Box and policy pages.
+**Screens:** Subscription homepage `/`, broadsheet newspaper `/news`, story `/news/[id]`, editions `/editions` and `/editions/[id]`; signup/offer `/subscribe`, account/sign-in `/member`. Owner `/newsroom`, `/editorial/[id]`, `/operations`, `/login`. Preserve the incoming subscription landing design, corrections, Post Box and policy pages. The homepage must show real signup/sales readiness; never invent an active price or subscription promise.
 
 **Built:** Next.js 16, React 19, TypeScript, custom CSS and Lucide. Six research disciplines feed a shared evidence hub and four PE desks. Public bylines are **By Agent 1–4**; PE labels stay internal. Internal tone: **A positive/constructive, B adverse/dubious, N neutral**. Never expose tone markers to readers. B stories require a right-of-reply outcome or rationale.
 
