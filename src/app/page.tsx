@@ -1,5 +1,5 @@
-import Newsroom from "@/components/newsroom";
+import SubscribeLanding from "@/components/subscribe-landing";
 
 export default function Home() {
-  return <Newsroom />;
+  return <SubscribeLanding />;
 }
