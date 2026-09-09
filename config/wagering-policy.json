@@ -1,0 +1,13 @@
+{
+  "version": "2026-09-initial-unreviewed",
+  "reviewedAt": null,
+  "expiresAt": null,
+  "reviewedBy": null,
+  "jurisdictions": ["ACT", "NSW", "NT", "QLD", "SA", "TAS", "VIC", "WA"],
+  "requireJamesAcknowledgement": true,
+  "allowOperatorPromotion": false,
+  "allowAffiliateLinks": false,
+  "allowInducements": false,
+  "blockedPhrases": ["guaranteed winner", "sure thing", "can't lose", "cannot lose", "risk-free bet", "certain winner", "guaranteed return", "bet your savings", "win back your losses"],
+  "reviewNote": "Unreviewed default. Wagering content is blocked until current applicable rules have been reviewed and this policy records the review and expiry dates. This configuration is a publication control, not legal advice."
+}

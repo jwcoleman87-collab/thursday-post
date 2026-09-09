@@ -1,0 +1,15 @@
+.env
+.env.*
+data/
+artifacts/
+test-results/
+playwright-report/
+*.sqlite*
+*.tsbuildinfo
+.cache/
+.vercel/
+.git/
+.next/
+node_modules/
+.codex/
+.agents/

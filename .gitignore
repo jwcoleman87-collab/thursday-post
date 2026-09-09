@@ -1,0 +1,14 @@
+node_modules/
+.next/
+.vercel/
+.env*
+!.env.example
+data/
+*.tsbuildinfo
+test-results/
+playwright-report/
+artifacts/
+.cache/
+.codex/
+.agents/
+*.sqlite*

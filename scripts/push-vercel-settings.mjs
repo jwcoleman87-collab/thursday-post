@@ -1,0 +1,11 @@
+import {readFileSync} from 'node:fs';
+const project=JSON.parse(readFileSync('.vercel/project.json','utf8'));
+if(project.projectName!=='the-racing-desk'||project.orgId!=='team_dCW82GqfRmq0Pl71eMgYL59J')throw new Error('Unapproved destination.');
+const auth=JSON.parse(readFileSync('.vercel/cli/auth.json','utf8'));
+const entries=JSON.parse(readFileSync('.vercel/deployment-env.json','utf8'));
+const url=`https://api.vercel.com/v10/projects/${encodeURIComponent(project.projectId)}/env?teamId=${encodeURIComponent(project.orgId)}`;
+const response=await fetch(url,{method:'POST',headers:{Authorization:`Bearer ${auth.token}`,'Content-Type':'application/json'},body:JSON.stringify(entries),signal:AbortSignal.timeout(30000),redirect:'error'});
+const result=await response.json();
+if(!response.ok)throw new Error(`Vercel configuration failed: HTTP ${response.status}, code ${result.error?.code||'unknown'}. Secret values omitted.`);
+if(result.failed?.length)throw new Error(`Vercel rejected ${result.failed.length} environment settings. Secret values omitted.`);
+console.log(`Vercel accepted the approved newspaper configuration. Submitted ${entries.length} keys; secret values omitted.`);
