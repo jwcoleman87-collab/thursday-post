@@ -173,7 +173,7 @@ test("story budget limits processing and ignores irrelevant source material", as
   const items = Array.from({ length: 6 }, (_, i) => source({ id: `source-${i}`, title: `Racing safety bulletin ${i}`, url: `https://racing.example.org/${i}` }));
   items.push(source({ id: "other", title: "Cooking with carrots", content: "Vegetable soup recipes" }));
   await runNewsroom(state, { mode: "live", items });
-  assert.equal(state.stories.length, BUDGET.maxStories);
+  assert.equal(state.stories.length, BUDGET.maxLiveStories);
   assert.ok(state.audit.some(e => e.action === "selection.deferred"));
   assert.ok(state.audit.some(e => e.action === "discovery.out_of_scope"));
 });
@@ -212,10 +212,10 @@ test("deferred source backlog is discovered on later GO after records disappear 
   const state = createState();
   const items = Array.from({ length: 6 }, (_, index) => source({ id: `backlog-${index}`, title: `Thoroughbred racing bulletin ${index}`, url: `https://racing.example.org/backlog/${index}` }));
   await runNewsroom(state, { mode: "live", items });
-  assert.equal(state.stories.length, 3);
+  assert.equal(state.stories.length, BUDGET.maxLiveStories);
   assert.equal(state.sourceItems.length, 6);
   await runNewsroom(state, { mode: "live", items: [] });
-  assert.equal(state.stories.length, 6);
+  assert.equal(state.stories.length, BUDGET.maxLiveStories * 2);
   assert.ok(state.stories.every(story => story.status === "waiting_approval"));
   assert.equal(state.publications.length, 0);
 });

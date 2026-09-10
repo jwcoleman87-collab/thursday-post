@@ -117,6 +117,14 @@ test("a Retry-After longer than the request deadline fails immediately rather th
   assert.ok(Date.now() - started < 5_000);
 });
 
+test("a 429 without Retry-After trips the breaker without a speculative retry", async () => {
+  const { provider, attempts } = gateway(() => new Response("{}", { status: 429 }));
+  await assert.rejects(provider.preflight(), /rate limited/);
+  assert.equal(attempts.length, 1);
+  await assert.rejects(provider.research(researchRequest(sourceItem(SOURCE_TEXT))), /rate limited/);
+  assert.equal(attempts.length, 1, "The shared breaker must contain an undeclared quota window");
+});
+
 test("concurrent research is paced within the bounded dispatch limit", async () => {
   const item = sourceItem(SOURCE_TEXT);
   const { provider, peak } = gateway(() => Response.json({}), [

@@ -132,8 +132,11 @@ async function oidcCredential(resolveToken: () => Promise<string>): Promise<stri
   } finally { clearTimeout(timer); }
 }
 
-/** Bounded pacing. Concurrency is matched by the engine's research fan-out limit. */
-export const GATEWAY_PACING = { maxConcurrent: 2, minIntervalMs: 350, maxRetries: 1, maxBackoffMs: 4_000, breakerMs: 60_000 } as const;
+/**
+ * The Hobby Gateway path currently admits five requests per rolling minute. Keep
+ * dispatch serial and below that boundary; preflight shares the same allowance.
+ */
+export const GATEWAY_PACING = { maxConcurrent: 1, minIntervalMs: 15_000, maxRetries: 1, maxBackoffMs: 4_000, breakerMs: 60_000 } as const;
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -160,7 +163,9 @@ class GatewayProvider implements ResearchProvider {
   private async acquire(): Promise<void> {
     if (this.active >= GATEWAY_PACING.maxConcurrent) await new Promise<void>((resolve) => this.waiting.push(resolve));
     this.active += 1;
-    const gap = this.lastDispatch + GATEWAY_PACING.minIntervalMs - Date.now();
+    // Injected transports are deterministic unit-test doubles and need no wall-clock delay.
+    const interval = this.transport === fetch ? GATEWAY_PACING.minIntervalMs : 0;
+    const gap = this.lastDispatch + interval - Date.now();
     if (gap > 0) await sleep(gap);
     this.lastDispatch = Date.now();
   }
@@ -175,7 +180,6 @@ class GatewayProvider implements ResearchProvider {
     if (this.accessFailure) throw this.accessFailure;
     const user = JSON.stringify(input);
     if (user.length > 32_000) throw new Error("AI request exceeds the newsroom evidence budget");
-    const started = Date.now();
     const token = await this.credential();
     const payload = JSON.stringify({
         model: this.model, max_tokens: name === "preflight" ? 16 : name === "research" ? 1600 : 2400,
@@ -195,7 +199,8 @@ class GatewayProvider implements ResearchProvider {
       try {
         response = await this.transport("https://ai-gateway.vercel.sh/v1/chat/completions", {
           method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          signal: AbortSignal.timeout(Math.max(1, 14_000 - (Date.now() - started))), redirect: "error", cache: "no-store",
+          // Queueing behind the shared pacer is not provider response time.
+          signal: AbortSignal.timeout(14_000), redirect: "error", cache: "no-store",
           body: payload,
         });
       } finally { this.release(); }
@@ -215,9 +220,14 @@ class GatewayProvider implements ResearchProvider {
       // The declared wait is never shortened: retrying earlier than instructed is what
       // turns one rate limit into a storm.
       const declared = parseRetryAfter(response.headers.get("retry-after"));
-      const wait = declared ?? Math.round((500 * 2 ** attempt) * (1 + Math.random()));
+      if (declared === null) {
+        const error = await gatewayFailure(response);
+        this.rateLimitedUntil = Date.now() + GATEWAY_PACING.breakerMs;
+        throw error;
+      }
+      const wait = declared;
       // Never retry beyond the pacing ceiling or into the request deadline: fail fast.
-      if (wait > GATEWAY_PACING.maxBackoffMs || wait + 2_000 > 14_000 - (Date.now() - started)) {
+      if (wait > GATEWAY_PACING.maxBackoffMs) {
         const error = await gatewayFailure(response);
         if (error.status === 429) this.rateLimitedUntil = Date.now() + Math.min(GATEWAY_PACING.breakerMs, declared ?? GATEWAY_PACING.breakerMs);
         throw error;

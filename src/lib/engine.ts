@@ -5,7 +5,7 @@ import { demoResearchProvider } from "./fixtures";
 import { GATEWAY_PACING } from "./providers";
 import { checkWagering, isWagering } from "./policy";
 
-export const BUDGET = { maxStories: 3, maxRounds: 2, retries: 1, taskTimeoutMs: 15_000, maxRunMs: 180_000, maxFindings: 8, maxQuoteWordsPerSource: 25, maxAdditionalSources: 2, retrievalTimeoutMs: 20_000 } as const;
+export const BUDGET = { maxStories: 3, maxLiveStories: 1, maxRounds: 2, retries: 1, taskTimeoutMs: 32_000, maxRunMs: 180_000, maxFindings: 8, maxQuoteWordsPerSource: 25, maxAdditionalSources: 2, retrievalTimeoutMs: 20_000 } as const;
 const now = () => new Date().toISOString();
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 const stableId = (prefix: string, value: string) => `${prefix}-${digest(value).slice(0, 20)}`;
@@ -455,10 +455,11 @@ async function draftStory(state: NewsroomState, story: Story, provider: Research
 
 export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | "live"; items: SourceItem[]; deadline?: number }, provider?: ResearchProvider, checkpoint?: (state: NewsroomState) => Promise<void>, retrieve?: TargetedRetriever): Promise<void> {
   const deadline = Math.min(Date.now() + BUDGET.maxRunMs, input.deadline ?? Infinity);
+  const storyBudget = input.mode === "live" ? BUDGET.maxLiveStories : BUDGET.maxStories;
   const researcher = provider ?? (input.mode === "demo" ? demoResearchProvider : recordProvider);
   const save = async () => { if (checkpoint) await checkpoint(state); };
   state.lastRunAt = now();
-  audit(state, "newsroom.started", `${input.mode} run; maximum ${BUDGET.maxStories} stories, ${BUDGET.maxRounds} research rounds and ${BUDGET.retries} retry per task.`);
+  audit(state, "newsroom.started", `${input.mode} run; maximum ${storyBudget} stories, ${BUDGET.maxRounds} research rounds and ${BUDGET.retries} retry per task.`);
   const groups = new Map<string, SourceItem[]>();
   // Prioritise newly received records over already ingested inbox history.
   const knownSourceIds = new Set(state.sourceItems.map(item => item.id));
@@ -474,7 +475,7 @@ export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | 
     groups.set(key, [...(groups.get(key) ?? []), item]);
   }
   const candidates = [...groups.entries()].sort((a, b) => Number(b[1].some(s => s.isCorrection)) - Number(a[1].some(s => s.isCorrection)) || Date.parse(b[1][0].publishedAt) - Date.parse(a[1][0].publishedAt));
-  const queue: Story[] = state.stories.filter(s => s.mode === input.mode && ["candidate", "researching", "drafting", "sent_back"].includes(s.status)).slice(0, BUDGET.maxStories);
+  const queue: Story[] = state.stories.filter(s => s.mode === input.mode && ["candidate", "researching", "drafting", "sent_back"].includes(s.status)).slice(0, storyBudget);
   for (const [key, items] of candidates) {
     const id = stableId("story", `${input.mode}|${key}`);
     let story = state.stories.find(s => s.id === id);
@@ -485,7 +486,7 @@ export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | 
         (story.publishedEvidenceAlerts ??= []).push({ sourceIds: newIds, receivedAt: now(), status: "open" });
         audit(state, "publication.new_evidence", `New archived evidence may affect the published story: ${newIds.join(", ")}. James must review and create a correction or update if required.`, story.id);
       }
-      if (hasNewEvidence && !["published", "rejected"].includes(story.status) && queue.length >= BUDGET.maxStories && !queue.includes(story)) {
+      if (hasNewEvidence && !["published", "rejected"].includes(story.status) && queue.length >= storyBudget && !queue.includes(story)) {
         audit(state, "selection.deferred", `New evidence for ${story.id} remains in the persistent source backlog until research capacity is available.`, story.id);
         if (story.status === "waiting_approval") transition(state, story, "candidate", "The previous approval package is paused until newly received evidence has been researched.");
         continue;
@@ -498,7 +499,7 @@ export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | 
       }
       continue;
     }
-    if (queue.length >= BUDGET.maxStories) { audit(state, "selection.deferred", `Deferred ${items[0].title}: per-run story budget reached.`); continue; }
+    if (queue.length >= storyBudget) { audit(state, "selection.deferred", `Deferred ${items[0].title}: per-run story budget reached.`); continue; }
     const route = routeStory(items);
     const correctionOf = items.find(i => i.relatedStoryId)?.relatedStoryId;
     story = { id, title: items[0].title, summary: items[0].content.slice(0, 280), mode: input.mode, status: "candidate", selectedReason: `${items.some(i => i.isCorrection) ? "Reader correction receives priority. " : ""}Relevant thoroughbred-racing lead with ${items.length} archived source(s); assigned multiple research disciplines for primary-record verification and context.`, ...route, sourceItems: items.map(i => i.id), claims: [], findings: [], gaps: [], media: items.flatMap(i => i.media ?? []).map(m => ({ ...structuredClone(m), allowed: false })), compliance: [], approvals: [], wagering: isWagering(items.map(i => `${i.title} ${i.content}`).join(" ")), ...(correctionOf ? { correctionOf } : {}), createdAt: now(), updatedAt: now() };
@@ -509,7 +510,7 @@ export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | 
   }
   // New candidates get their turn before retrying old infrastructure failures.
   const retryable = state.stories.filter(story => story.mode === input.mode && story.status === "blocked" && story.gaps.some(gap => gap.status === "open" && operationalGap(state, story, gap))).sort((a, b) => Date.parse(a.updatedAt) - Date.parse(b.updatedAt));
-  for (const story of retryable) if (queue.length < BUDGET.maxStories && !queue.includes(story)) queue.push(story);
+  for (const story of retryable) if (queue.length < storyBudget && !queue.includes(story)) queue.push(story);
   for (const story of queue) {
     try {
       if (Date.now() >= deadline) {
