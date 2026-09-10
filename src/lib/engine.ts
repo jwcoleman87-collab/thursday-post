@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { ArticleDraft, ArticleSentence, Claim, ComplianceCheck, EvidenceGap, FindingInput, FormAnalysis, FormRunner, NewsroomState, PeAgentId, ResearchAgentId, ResearchProvider, ResearchRequest, ResearchResult, SourceItem, Story, Publication, TargetedRetriever } from "./domain";
 import { PE_AGENTS, RESEARCH_AGENTS } from "./domain";
 import { demoResearchProvider } from "./fixtures";
+import { GATEWAY_PACING } from "./providers";
 import { checkWagering, isWagering } from "./policy";
 
 export const BUDGET = { maxStories: 3, maxRounds: 2, retries: 1, taskTimeoutMs: 15_000, maxRunMs: 180_000, maxFindings: 8, maxQuoteWordsPerSource: 25, maxAdditionalSources: 2, retrievalTimeoutMs: 20_000 } as const;
@@ -122,6 +123,25 @@ const recordProvider: ResearchProvider = {
     }) };
   },
 };
+
+/**
+ * Run tasks with bounded concurrency. Unbounded Promise.all fan-out starts every task's
+ * wall-clock timeout at once and dispatches every request simultaneously, which is what
+ * produced the observed 429 storm. The limit matches GATEWAY_PACING.maxConcurrent so no
+ * task sits queued inside the provider burning its own timeout.
+ */
+async function mapBounded<T>(items: T[], limit: number, run: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    for (;;) {
+      const index = next;
+      next += 1;
+      if (index >= items.length) return;
+      await run(items[index]);
+    }
+  });
+  await Promise.all(workers);
+}
 
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -503,7 +523,7 @@ export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | 
       await save();
       const requests = wasSentBack ? story.gaps.filter(g => g.status === "open" && g.blocking).map(g => ({ agentId: g.agentId, question: g.question })) : story.researchAgentIds.map(agentId => ({ agentId, question: `${RESEARCH_AGENTS[agentId - 1].description} Investigate this specific racing lead, preserve exact passages and identify unknowns.` }));
       const uniqueRequests = [...new Map(requests.map(request => [`${request.agentId}|${request.question}`, request])).values()];
-      await Promise.all(uniqueRequests.map(r => researchTask(state, story, r.agentId, 0, r.question, researcher, deadline)));
+      await mapBounded(uniqueRequests, GATEWAY_PACING.maxConcurrent, r => researchTask(state, story, r.agentId, 0, r.question, researcher, deadline));
       assess(state, story);
       await save();
       // Drafting may itself identify missing evidence; those requests share the same bounded loop.
@@ -526,7 +546,7 @@ export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | 
         }
         transition(state, story, "researching", `${followups.length} targeted gap(s) returned to the appropriate research agents.`);
         await save();
-        await Promise.all(followups.map(g => researchTask(state, story, g.agentId, 1, g.question, researcher, deadline)));
+        await mapBounded(followups, GATEWAY_PACING.maxConcurrent, g => researchTask(state, story, g.agentId, 1, g.question, researcher, deadline));
         assess(state, story);
         await save();
         await draftStory(state, story, researcher, deadline);
