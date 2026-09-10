@@ -148,7 +148,7 @@ const requestFixture = (): ResearchRequest => ({
   sourceItems: [{ id: "source-1", title: "Racing consultation", content: "The racing consultation is open.", url: "https://racing.example/news/1", type: "official", sourceName: "Racing authority", independenceKey: "authority", publishedAt: "2026-09-09T09:00:00Z", retrievedAt: "2026-09-09T10:00:00Z" }],
 });
 
-test("AI adapter uses separate role instructions and rejects fabricated evidence", async () => {
+test("AI adapter uses separate role instructions and excludes fabricated evidence", async () => {
   assert.equal(new Set(Object.values(RESEARCH_DISCIPLINES)).size, 6);
   const valid = { findings: [{ text: "Record reports a consultation.", kind: "record_statement", sourceIds: ["source-1"], quote: "The racing consultation is open.", contradictorySourceIds: [], questions: [], confidence: "medium" }] };
   let sent: Record<string, unknown> | undefined;
@@ -157,7 +157,7 @@ test("AI adapter uses separate role instructions and rejects fabricated evidence
   assert.equal((await provider.research(requestFixture())).findings.length, 1);
   assert.ok(JSON.stringify(sent).includes("Official Records & Data"));
   valid.findings[0].quote = "This never appeared in the source.";
-  await assert.rejects(provider.research(requestFixture()), /absent/);
+  assert.deepEqual((await provider.research(requestFixture())).findings, []);
   valid.findings[0].sourceIds = ["invented"];
   await assert.rejects(provider.research(requestFixture()), /unknown source/);
 });

@@ -5,7 +5,7 @@ import { demoResearchProvider } from "./fixtures";
 import { GATEWAY_PACING } from "./providers";
 import { checkWagering, isWagering } from "./policy";
 
-export const BUDGET = { maxStories: 3, maxLiveStories: 1, maxRounds: 2, retries: 1, taskTimeoutMs: 32_000, maxRunMs: 180_000, maxFindings: 8, maxQuoteWordsPerSource: 25, maxAdditionalSources: 2, retrievalTimeoutMs: 20_000 } as const;
+export const BUDGET = { maxStories: 3, maxLiveStories: 1, maxRounds: 2, maxLiveRounds: 1, retries: 1, taskTimeoutMs: 48_000, maxRunMs: 240_000, maxFindings: 8, maxQuoteWordsPerSource: 25, maxAdditionalSources: 2, retrievalTimeoutMs: 20_000 } as const;
 const now = () => new Date().toISOString();
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 const stableId = (prefix: string, value: string) => `${prefix}-${digest(value).slice(0, 20)}`;
@@ -453,13 +453,14 @@ async function draftStory(state: NewsroomState, story: Story, provider: Research
   state.runs.push({ id: stableId("run", `${draft.id}|editorial|${state.runs.length}`), storyId: story.id, agentType: "editorial", agentId: story.peAgentId, status: providerFailed ? "failed" : "completed", summary: providerFailed ? "PE model request failed. The verified-quotation briefing is retained for private review; the AI editorial stage needs another attempt." : `${sentences.length} evidence-linked sentences; public byline ${draft.byline}.`, startedAt, finishedAt: now() });
 }
 
-export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | "live"; items: SourceItem[]; deadline?: number }, provider?: ResearchProvider, checkpoint?: (state: NewsroomState) => Promise<void>, retrieve?: TargetedRetriever): Promise<void> {
+export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | "live"; items: SourceItem[]; deadline?: number; maxRounds?: number }, provider?: ResearchProvider, checkpoint?: (state: NewsroomState) => Promise<void>, retrieve?: TargetedRetriever): Promise<void> {
   const deadline = Math.min(Date.now() + BUDGET.maxRunMs, input.deadline ?? Infinity);
   const storyBudget = input.mode === "live" ? BUDGET.maxLiveStories : BUDGET.maxStories;
+  const roundBudget = Math.max(1, Math.min(BUDGET.maxRounds, input.maxRounds ?? BUDGET.maxRounds));
   const researcher = provider ?? (input.mode === "demo" ? demoResearchProvider : recordProvider);
   const save = async () => { if (checkpoint) await checkpoint(state); };
   state.lastRunAt = now();
-  audit(state, "newsroom.started", `${input.mode} run; maximum ${storyBudget} stories, ${BUDGET.maxRounds} research rounds and ${BUDGET.retries} retry per task.`);
+  audit(state, "newsroom.started", `${input.mode} run; maximum ${storyBudget} stories, ${roundBudget} research rounds and ${BUDGET.retries} retry per task.`);
   const groups = new Map<string, SourceItem[]>();
   // Prioritise newly received records over already ingested inbox history.
   const knownSourceIds = new Set(state.sourceItems.map(item => item.id));
@@ -531,7 +532,7 @@ export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | 
       await draftStory(state, story, researcher, deadline);
       await save();
       const followups = [...new Map(story.gaps.filter(g => g.status === "open").map(gap => [`${gap.agentId}|${gap.question}`, gap])).values()].slice(0, 6);
-      if (followups.length) {
+      if (followups.length && roundBudget > 1) {
         if (retrieve && input.mode === "live" && Date.now() < deadline) {
           const retrievalDeadline = Math.min(deadline, Date.now() + BUDGET.retrievalTimeoutMs);
           try {
@@ -551,6 +552,8 @@ export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | 
         assess(state, story);
         await save();
         await draftStory(state, story, researcher, deadline);
+      } else if (followups.length) {
+        audit(state, "controller.followups_deferred", `${followups.length} unresolved evidence question(s) remain queued for a later live run; the current provider allowance is reserved for the PE handoff.`, story.id);
       }
       story.compliance = checks(state, story);
       const blocked = story.compliance.some(c => c.status === "blocked");

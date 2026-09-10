@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { decideStory, runNewsroom } from './engine';
+import { BUDGET, decideStory, runNewsroom } from './engine';
 import { DEMO_ITEMS } from './fixtures';
 import { collectSourceItems, createTargetedRetriever, type RegisteredSource, validateSourceUrl } from './ingestion';
 import { createLiveProvider, liveProviderConfigured, GatewayAccessError } from './providers';
@@ -145,7 +145,7 @@ export async function startRun(mode:'demo'|'live',services:RunServices={}) {
     await checkpoint(state);
     const registry=mode==='live'?(await readStore()).sources:[];
     const previousAgentRuns=new Set(state.runs.map(run=>run.id));
-    await runNewsroom(state,{mode,items,deadline},provider,checkpoint,mode==='live'?createTargetedRetriever(registry):undefined);
+    await runNewsroom(state,{mode,items,deadline,...(mode==='live'?{maxRounds:BUDGET.maxLiveRounds}:{})},provider,checkpoint,mode==='live'?createTargetedRetriever(registry):undefined);
     state.audit.push(event('run_finished',`${mode} run finished. Ready stories await James; unresolved evidence remains labelled.`));
     await checkpoint(state);
     const failedTasks=state.runs.some(run=>!previousAgentRuns.has(run.id)&&run.status==='failed');

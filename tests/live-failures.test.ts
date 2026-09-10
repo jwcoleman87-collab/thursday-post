@@ -68,12 +68,13 @@ test("quote resolution accepts typographic drift and stores the verbatim source 
   assert.notEqual(stored, retyped, "The model's re-typed rendering must never be stored as evidence");
 });
 
-test("a quote absent from the supplied excerpt is still rejected", async () => {
+test("a quote absent from the supplied excerpt is discarded without retrying the model", async () => {
   const item = sourceItem(SOURCE_TEXT);
   const { provider } = gateway(() => Response.json({}), [
     { text: "Fabricated.", kind: "fact", sourceIds: [item.id], quote: "the stewards admitted a cover-up", contradictorySourceIds: [], questions: [], confidence: "high" },
   ]);
-  await assert.rejects(provider.research(researchRequest(item)), /quote absent from its source excerpt/);
+  const result = await provider.research(researchRequest(item));
+  assert.deepEqual(result.findings, []);
 });
 
 test("quote resolution does not accept a reordered or partially invented passage", () => {

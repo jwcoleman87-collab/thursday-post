@@ -133,10 +133,11 @@ async function oidcCredential(resolveToken: () => Promise<string>): Promise<stri
 }
 
 /**
- * The Hobby Gateway path currently admits five requests per rolling minute. Keep
- * dispatch serial and below that boundary; preflight shares the same allowance.
+ * The current provider path admitted five requests, then rejected a sixth dispatched
+ * 75 seconds after preflight. Keep dispatch serial and below that observed boundary;
+ * preflight shares the same allowance.
  */
-export const GATEWAY_PACING = { maxConcurrent: 1, minIntervalMs: 15_000, maxRetries: 1, maxBackoffMs: 4_000, breakerMs: 60_000 } as const;
+export const GATEWAY_PACING = { maxConcurrent: 1, minIntervalMs: 30_000, maxRetries: 1, maxBackoffMs: 4_000, breakerMs: 120_000 } as const;
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -262,7 +263,7 @@ class GatewayProvider implements ResearchProvider {
       RESEARCH_DISCIPLINES[request.agentId] + "\nYou write structured findings, never newspaper articles. Extract at most four relevant, distinct findings. Each quote must be an exact contiguous excerpt of one supplied source, at most 280 characters. For public records prefer kind record_statement: the claim is what that source states, not proof of the underlying event. Private emails and social rumours remain allegations, opinions or unverified facts. Do not upgrade verification based on your confidence. Preserve exact evidence gaps as specific questions. If no evidence relevant to your discipline exists, return an empty findings array.",
       { story: { id: request.story.id, title: request.story.title }, round: request.round, researchQuestion: request.question, corpusLimit: "Only these excerpts were read; collection is bounded and additional web searches were not performed.", sources });
     const ids = new Set(sources.map((source) => source.id));
-    for (const finding of result.findings) {
+    result.findings = result.findings.filter((finding) => {
       if ([...finding.sourceIds, ...finding.contradictorySourceIds].some((id) => !ids.has(id))) throw new Error("AI research cited an unknown source ID");
       if (finding.quote) {
         let resolved: string | null = null;
@@ -271,11 +272,14 @@ class GatewayProvider implements ResearchProvider {
           resolved = resolveQuoteToSource(finding.quote, source.text);
           if (resolved) break;
         }
-        if (!resolved) throw new Error("AI research supplied a quote absent from its source excerpt");
+        // Invented or materially altered quotations are content failures, not transport
+        // failures. Exclude that finding instead of spending another scarce model call.
+        if (!resolved) return false;
         // Store the verbatim source passage, never the model's re-typed rendering.
         finding.quote = resolved;
       }
-    }
+      return true;
+    });
     return result;
   }
 
