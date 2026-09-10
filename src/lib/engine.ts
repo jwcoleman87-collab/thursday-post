@@ -5,7 +5,7 @@ import { demoResearchProvider } from "./fixtures";
 import { GATEWAY_PACING } from "./providers";
 import { checkWagering, isWagering } from "./policy";
 
-export const BUDGET = { maxStories: 3, maxLiveStories: 1, maxRounds: 2, maxLiveRounds: 1, retries: 1, taskTimeoutMs: 48_000, maxRunMs: 240_000, maxFindings: 8, maxQuoteWordsPerSource: 25, maxAdditionalSources: 2, retrievalTimeoutMs: 20_000 } as const;
+export const BUDGET = { maxStories: 3, maxLiveStories: 1, maxRounds: 2, maxLiveRounds: 1, maxLiveResearchTasks: 3, retries: 1, taskTimeoutMs: 48_000, maxRunMs: 240_000, maxFindings: 8, maxQuoteWordsPerSource: 25, maxAdditionalSources: 2, retrievalTimeoutMs: 20_000 } as const;
 const now = () => new Date().toISOString();
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 const stableId = (prefix: string, value: string) => `${prefix}-${digest(value).slice(0, 20)}`;
@@ -453,7 +453,7 @@ async function draftStory(state: NewsroomState, story: Story, provider: Research
   state.runs.push({ id: stableId("run", `${draft.id}|editorial|${state.runs.length}`), storyId: story.id, agentType: "editorial", agentId: story.peAgentId, status: providerFailed ? "failed" : "completed", summary: providerFailed ? "PE model request failed. The verified-quotation briefing is retained for private review; the AI editorial stage needs another attempt." : `${sentences.length} evidence-linked sentences; public byline ${draft.byline}.`, startedAt, finishedAt: now() });
 }
 
-export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | "live"; items: SourceItem[]; deadline?: number; maxRounds?: number }, provider?: ResearchProvider, checkpoint?: (state: NewsroomState) => Promise<void>, retrieve?: TargetedRetriever): Promise<void> {
+export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | "live"; items: SourceItem[]; deadline?: number; maxRounds?: number; maxResearchTasks?: number }, provider?: ResearchProvider, checkpoint?: (state: NewsroomState) => Promise<void>, retrieve?: TargetedRetriever): Promise<void> {
   const deadline = Math.min(Date.now() + BUDGET.maxRunMs, input.deadline ?? Infinity);
   const storyBudget = input.mode === "live" ? BUDGET.maxLiveStories : BUDGET.maxStories;
   const roundBudget = Math.max(1, Math.min(BUDGET.maxRounds, input.maxRounds ?? BUDGET.maxRounds));
@@ -524,8 +524,11 @@ export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | 
       transition(state, story, "researching", wasSentBack ? "James's revision request returns to the research controller." : "Story selected; specialist research commissioned.");
       await save();
       const requests = wasSentBack ? story.gaps.filter(g => g.status === "open" && g.blocking).map(g => ({ agentId: g.agentId, question: g.question })) : story.researchAgentIds.map(agentId => ({ agentId, question: `${RESEARCH_AGENTS[agentId - 1].description} Investigate this specific racing lead, preserve exact passages and identify unknowns.` }));
-      const uniqueRequests = [...new Map(requests.map(request => [`${request.agentId}|${request.question}`, request])).values()];
-      await mapBounded(uniqueRequests, GATEWAY_PACING.maxConcurrent, r => researchTask(state, story, r.agentId, 0, r.question, researcher, deadline));
+      const deferredAgents = new Set(story.gaps.filter(gap => gap.status === "open" && gap.question.includes("provider request allowance")).map(gap => gap.agentId));
+      const uniqueRequests = [...new Map(requests.map(request => [`${request.agentId}|${request.question}`, request])).values()].sort((a, b) => Number(deferredAgents.has(b.agentId)) - Number(deferredAgents.has(a.agentId)));
+      const selectedRequests = uniqueRequests.slice(0, input.maxResearchTasks ?? uniqueRequests.length);
+      for (const request of uniqueRequests.slice(selectedRequests.length)) addGap(state, story, `Research Agent ${request.agentId} is queued for the next live run so the current provider request allowance retains capacity for the PE handoff.`, request.agentId, true, `provider-budget-agent-${request.agentId}`);
+      await mapBounded(selectedRequests, GATEWAY_PACING.maxConcurrent, r => researchTask(state, story, r.agentId, 0, r.question, researcher, deadline));
       assess(state, story);
       await save();
       // Drafting may itself identify missing evidence; those requests share the same bounded loop.
