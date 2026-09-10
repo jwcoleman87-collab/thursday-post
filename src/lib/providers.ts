@@ -264,7 +264,7 @@ class GatewayProvider implements ResearchProvider {
       { story: { id: request.story.id, title: request.story.title }, round: request.round, researchQuestion: request.question, corpusLimit: "Only these excerpts were read; collection is bounded and additional web searches were not performed.", sources });
     const ids = new Set(sources.map((source) => source.id));
     result.findings = result.findings.filter((finding) => {
-      if ([...finding.sourceIds, ...finding.contradictorySourceIds].some((id) => !ids.has(id))) throw new Error("AI research cited an unknown source ID");
+      if ([...finding.sourceIds, ...finding.contradictorySourceIds].some((id) => !ids.has(id))) return false;
       if (finding.quote) {
         let resolved: string | null = null;
         for (const source of sources) {

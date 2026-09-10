@@ -159,7 +159,7 @@ test("AI adapter uses separate role instructions and excludes fabricated evidenc
   valid.findings[0].quote = "This never appeared in the source.";
   assert.deepEqual((await provider.research(requestFixture())).findings, []);
   valid.findings[0].sourceIds = ["invented"];
-  await assert.rejects(provider.research(requestFixture()), /unknown source/);
+  assert.deepEqual((await provider.research(requestFixture())).findings, []);
 });
 
 test("editorial proposals with invented facts stay outside approvable text until James reviews evidence-linked prose", async () => {

@@ -145,7 +145,7 @@ export async function startRun(mode:'demo'|'live',services:RunServices={}) {
     await checkpoint(state);
     const registry=mode==='live'?(await readStore()).sources:[];
     const previousAgentRuns=new Set(state.runs.map(run=>run.id));
-    await runNewsroom(state,{mode,items,deadline,...(mode==='live'?{maxRounds:BUDGET.maxLiveRounds,maxResearchTasks:BUDGET.maxLiveResearchTasks}:{})},provider,checkpoint,mode==='live'?createTargetedRetriever(registry):undefined);
+    await runNewsroom(state,{mode,items,deadline,...(mode==='live'?{maxRounds:BUDGET.maxLiveRounds,maxResearchTasks:BUDGET.maxLiveResearchTasks,maxTaskRetries:BUDGET.maxLiveRetries}:{})},provider,checkpoint,mode==='live'?createTargetedRetriever(registry):undefined);
     state.audit.push(event('run_finished',`${mode} run finished. Ready stories await James; unresolved evidence remains labelled.`));
     await checkpoint(state);
     const failedTasks=state.runs.some(run=>!previousAgentRuns.has(run.id)&&run.status==='failed');
