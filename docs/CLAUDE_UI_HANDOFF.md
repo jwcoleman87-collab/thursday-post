@@ -20,6 +20,6 @@ Owners collect without AI, review proposals, save human-attested narrative with 
 
 **Edit surface:** Components, page presentation, `globals.css`, `paper.css`, edition styles, metadata and brand assets. Keep `src/lib/**`, API routes, schemas, storage, dependencies, credentials and service configuration stable. Preserve demo/private boundaries and immutable approvals. Do not enable sales, providers, monitoring, publication or delivery during UI work.
 
-**Verification:** 107 tests, TypeScript, production builds, desktop/mobile browser checks and deployed access/collection checks pass. AI is paused; Stripe/Resend live connections are incomplete, sales closed, price unset. Fixture tests do not prove payment or email provider operation.
+**Verification:** 113 tests, TypeScript, production builds and deployed access/collection checks pass. Card verification and US$5 monthly project budget are complete. Live AI preflight succeeded, but the full run failed exact-quote validation and then Gateway rate limits; AI is paused pending repair. Read `CLAUDE_FINISH_PROMPT.md` for the current functional handoff. Stripe/Resend live connections remain incomplete, sales closed, price unset. Controlled tests do not prove live provider operation.
 
 Finish with responsive/keyboard checks and `npm test`, `npm run typecheck`, `npm run build`; report actual results and remaining template differences.

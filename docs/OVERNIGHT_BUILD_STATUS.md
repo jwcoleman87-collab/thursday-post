@@ -4,6 +4,8 @@ Application implementation is deployed and verified. The project is not open for
 
 ## AI activation follow-up — 10 September
 
+Latest: James completed card verification and saved the US$5 monthly project limit. OIDC preflight succeeded. Deployment `dpl_9DYQiDoEywdsTk4sXGsPMTdAJ9hz` enabled live AI; the first complete hosted run (`2b6a98ca-8485-4b0c-b994-900440b26e2f`) failed: four research responses had quotations absent from their source excerpts, then immediate retries hit HTTP429. Usage was 6,978 input / 2,600 output tokens, estimated US$0.0069512; no researcher completed and no PE model proposal was produced. Five live records are archived and zero public articles exist. AI is paused again, daily source collection remains enabled, and `CLAUDE_FINISH_PROMPT.md` contains the precise next repair/verification instructions. This latest record supersedes the account-verification blocker below.
+
 James requested prioritising AI/research/PE operation and setting Stripe aside. This supersedes the earlier decision to defer AI activation, but does not authorise an unspecified paid budget or top-ups. A fresh project OIDC preflight returned HTTP 403 `customer_verification_required`; Vercel login/card verification is pending. AI remains paused until that access test succeeds.
 
 Hosted source collection succeeded again, adding one record (three real records now archived). Daily monitoring is enabled; the existing cron collects sources while AI is paused. Nothing was published or emailed. The first scheduled invocation after enabling has not yet been observed.
