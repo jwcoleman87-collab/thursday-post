@@ -4209,3 +4209,4 @@ button {
     scroll-behavior: auto !important;
   }
 }
+.next-issue-link{margin:16px 12px 0;padding:13px 14px;display:flex;align-items:center;gap:11px;border:1px solid #d7c99255;background:#f7efd010;color:#f1e7c0;text-decoration:none;border-radius:7px;font-size:11px}.next-issue-link:hover{background:#f7efd01c}.next-issue-link>span{display:grid;gap:2px;flex:1}.next-issue-link strong{font-size:11px}.next-issue-link small{color:#9fb6a8;font-size:8px;font-weight:400}

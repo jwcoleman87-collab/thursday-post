@@ -363,6 +363,11 @@ export default function Newsroom() {
             </button>
           ))}
         </nav>
+        <Link className="next-issue-link" href="/next-issue" target="_blank">
+          <BookOpen size={18} />
+          <span><strong>Next issue so far</strong><small>Live progress proof</small></span>
+          <ArrowUpRight size={14} />
+        </Link>
         <Link className="operations-link" href="/operations">
           Editions, subscribers &amp; publishing →
         </Link>
