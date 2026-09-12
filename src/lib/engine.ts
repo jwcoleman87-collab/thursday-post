@@ -51,8 +51,17 @@ function addSource(state: NewsroomState, item: SourceItem, mode: Story["mode"]) 
 
 function sourceItems(state: NewsroomState, story: Story) { return state.sourceItems.filter(s => story.sourceItems.includes(s.id)); }
 
+/**
+ * A gap this engine opened because a run ran out of request capacity, not because the
+ * reporting is unresolved. Identified by its stable key so the deferral survives wording
+ * changes; it stays blocking, because deferred research must be finished, never bypassed.
+ */
+function deferredGap(story: Story, gap: EvidenceGap): boolean {
+  return gap.id === stableId("gap", `${story.id}|provider-budget-agent-${gap.agentId}`);
+}
+
 function operationalGap(state: NewsroomState, story: Story, gap: EvidenceGap): boolean {
-  return gap.id === stableId("gap", `${story.id}|wall-clock-budget`) || state.tasks.some(task => task.storyId === story.id && gap.id === stableId("gap", `${story.id}|task-failure-${task.id}`));
+  return gap.id === stableId("gap", `${story.id}|wall-clock-budget`) || deferredGap(story, gap) || state.tasks.some(task => task.storyId === story.id && gap.id === stableId("gap", `${story.id}|task-failure-${task.id}`));
 }
 
 function recoverAgent(state: NewsroomState, story: Story, agentId: ResearchAgentId) {
@@ -149,7 +158,8 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   finally { if (timer) clearTimeout(timer); }
 }
 
-async function researchTask(state: NewsroomState, story: Story, agentId: ResearchAgentId, round: number, question: string, provider: ResearchProvider, deadline: number, retries: number = BUDGET.retries) {
+/** The task slot a research request maps to, following the archived later-run retry chain. */
+function resolveTask(state: NewsroomState, story: Story, agentId: ResearchAgentId, round: number, question: string) {
   const revision = story.approvals.filter(a => a.decision === "send_back").length;
   const baseId = stableId("task", `${story.id}|${revision}|${agentId}|${round}|${question}|${[...story.sourceItems].sort().join(",")}`);
   let id = baseId;
@@ -160,6 +170,13 @@ async function researchTask(state: NewsroomState, story: Story, agentId: Researc
     id = stableId("task", `${baseId}|later-run-retry-${retryGeneration}`);
     task = state.tasks.find(t => t.id === id);
   }
+  return { baseId, id, task, retryGeneration };
+}
+
+async function researchTask(state: NewsroomState, story: Story, agentId: ResearchAgentId, round: number, question: string, provider: ResearchProvider, deadline: number, retries: number = BUDGET.retries) {
+  const slot = resolveTask(state, story, agentId, round, question);
+  const { baseId, id, retryGeneration } = slot;
+  let task = slot.task;
   if (task?.status === "completed") return;
   if (!task) {
     task = { id, storyId: story.id, agentId, round, question, status: "pending", attempts: 0, createdAt: now() };
@@ -477,6 +494,17 @@ export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | 
   }
   const candidates = [...groups.entries()].sort((a, b) => Number(b[1].some(s => s.isCorrection)) - Number(a[1].some(s => s.isCorrection)) || Date.parse(b[1][0].publishedAt) - Date.parse(a[1][0].publishedAt));
   const queue: Story[] = state.stories.filter(s => s.mode === input.mode && ["candidate", "researching", "drafting", "sent_back"].includes(s.status)).slice(0, storyBudget);
+  // Unfinished research resumes before fresh leads are commissioned. A story whose research was
+  // cut short by request capacity can only finish if a later run returns to it; commissioning a
+  // new lead every run grows the blocked backlog and fills no edition. Closest to done goes
+  // first so packages complete. Leads that miss this run stay in the preserved source backlog.
+  const outstanding = (story: Story) => story.gaps.filter(gap => gap.status === "open" && gap.blocking).length;
+  const retryable = state.stories.filter(story => story.mode === input.mode && story.status === "blocked" && story.gaps.some(gap => gap.status === "open" && operationalGap(state, story, gap))).sort((a, b) => outstanding(a) - outstanding(b) || Date.parse(a.updatedAt) - Date.parse(b.updatedAt));
+  for (const story of retryable) {
+    if (queue.length >= storyBudget || queue.includes(story)) continue;
+    queue.push(story);
+    audit(state, "selection.resumed", `Unfinished story ${story.id} resumes before new leads; ${outstanding(story)} blocking question(s) outstanding.`, story.id);
+  }
   for (const [key, items] of candidates) {
     const id = stableId("story", `${input.mode}|${key}`);
     let story = state.stories.find(s => s.id === id);
@@ -509,9 +537,6 @@ export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | 
     audit(state, "discovery.candidate_created", story.selectedReason, story.id);
     await save();
   }
-  // New candidates get their turn before retrying old infrastructure failures.
-  const retryable = state.stories.filter(story => story.mode === input.mode && story.status === "blocked" && story.gaps.some(gap => gap.status === "open" && operationalGap(state, story, gap))).sort((a, b) => Date.parse(a.updatedAt) - Date.parse(b.updatedAt));
-  for (const story of retryable) if (queue.length < storyBudget && !queue.includes(story)) queue.push(story);
   for (const story of queue) {
     try {
       if (Date.now() >= deadline) {
@@ -521,13 +546,32 @@ export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | 
         continue;
       }
       const wasSentBack = story.status === "sent_back";
-      transition(state, story, "researching", wasSentBack ? "James's revision request returns to the research controller." : "Story selected; specialist research commissioned.");
+      const resuming = story.status === "blocked";
+      const commission = (agentId: ResearchAgentId) => `${RESEARCH_AGENTS[agentId - 1].description} Investigate this specific racing lead, preserve exact passages and identify unknowns.`;
+      transition(state, story, "researching", wasSentBack ? "James's revision request returns to the research controller." : resuming ? "Outstanding evidence questions return to the research controller." : "Story selected; specialist research commissioned.");
       await save();
-      const requests = wasSentBack ? story.gaps.filter(g => g.status === "open" && g.blocking).map(g => ({ agentId: g.agentId, question: g.question })) : story.researchAgentIds.map(agentId => ({ agentId, question: `${RESEARCH_AGENTS[agentId - 1].description} Investigate this specific racing lead, preserve exact passages and identify unknowns.` }));
-      const deferredAgents = new Set(story.gaps.filter(gap => gap.status === "open" && gap.question.includes("provider request allowance")).map(gap => gap.agentId));
+      // A run can expire before per-agent deferrals are recorded. Include the assigned
+      // commissions on recovery as well as open gaps; the task filter below removes
+      // work already completed against this source/review version.
+      const commissions = story.researchAgentIds.map(agentId => ({ agentId, question: commission(agentId) }));
+      const gapRequests = story.gaps.filter(g => g.status === "open" && g.blocking).map(g => ({ agentId: g.agentId, question: operationalGap(state, story, g) ? commission(g.agentId) : g.question }));
+      const requests = wasSentBack ? gapRequests : resuming ? [...commissions, ...gapRequests] : commissions;
+      const deferredAgents = new Set(story.gaps.filter(gap => gap.status === "open" && deferredGap(story, gap)).map(gap => gap.agentId));
       const uniqueRequests = [...new Map(requests.map(request => [`${request.agentId}|${request.question}`, request])).values()].sort((a, b) => Number(deferredAgents.has(b.agentId)) - Number(deferredAgents.has(a.agentId)));
-      const selectedRequests = uniqueRequests.slice(0, input.maxResearchTasks ?? uniqueRequests.length);
-      for (const request of uniqueRequests.slice(selectedRequests.length)) addGap(state, story, `Research Agent ${request.agentId} is queued for the next live run so the current provider request allowance retains capacity for the PE handoff.`, request.agentId, true, `provider-budget-agent-${request.agentId}`);
+      // Completed work must not consume a request slot, or a resumed story makes no progress.
+      const pendingRequests = uniqueRequests.filter(request => resolveTask(state, story, request.agentId, 0, request.question).task?.status !== "completed");
+      const selectedRequests = pendingRequests.slice(0, input.maxResearchTasks ?? pendingRequests.length);
+      for (const request of pendingRequests.slice(selectedRequests.length)) {
+        const gap = addGap(state, story, `Research Agent ${request.agentId} is queued for the next live run so the current provider request allowance retains capacity for the PE handoff.`, request.agentId, true, `provider-budget-agent-${request.agentId}`);
+        // New evidence can require another task version after this agent's old
+        // deferral was resolved. That previous result must not hide pending work.
+        if (gap.status !== "open") {
+          gap.status = "open";
+          gap.claimIds = [];
+          delete gap.resolution;
+          audit(state, "controller.deferral_reopened", `Research Agent ${request.agentId} has unfinished work for the current evidence/review version.`, story.id);
+        }
+      }
       await mapBounded(selectedRequests, GATEWAY_PACING.maxConcurrent, r => researchTask(state, story, r.agentId, 0, r.question, researcher, deadline, input.maxTaskRetries));
       assess(state, story);
       await save();
