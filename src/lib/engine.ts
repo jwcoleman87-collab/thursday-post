@@ -493,19 +493,29 @@ export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | 
     groups.set(key, [...(groups.get(key) ?? []), item]);
   }
   const candidates = [...groups.entries()].sort((a, b) => Number(b[1].some(s => s.isCorrection)) - Number(a[1].some(s => s.isCorrection)) || Date.parse(b[1][0].publishedAt) - Date.parse(a[1][0].publishedAt));
-  const queue: Story[] = state.stories.filter(s => s.mode === input.mode && ["candidate", "researching", "drafting", "sent_back"].includes(s.status)).slice(0, storyBudget);
-  // Unfinished research resumes before fresh leads are commissioned. A story whose research was
-  // cut short by request capacity can only finish if a later run returns to it; commissioning a
-  // new lead every run grows the blocked backlog and fills no edition. Closest to done goes
-  // first so packages complete. Leads that miss this run stay in the preserved source backlog.
+  const pending = state.stories.filter(s => s.mode === input.mode && ["candidate", "researching", "drafting", "sent_back"].includes(s.status));
   const outstanding = (story: Story) => story.gaps.filter(gap => gap.status === "open" && gap.blocking).length;
   const retryable = state.stories.filter(story => story.mode === input.mode && story.status === "blocked" && story.gaps.some(gap => gap.status === "open" && operationalGap(state, story, gap))).sort((a, b) => outstanding(a) - outstanding(b) || Date.parse(a.updatedAt) - Date.parse(b.updatedAt));
-  for (const story of retryable) {
-    if (queue.length >= storyBudget || queue.includes(story)) continue;
-    queue.push(story);
-    audit(state, "selection.resumed", `Unfinished story ${story.id} resumes before new leads; ${outstanding(story)} blocking question(s) outstanding.`, story.id);
-  }
+  const queue: Story[] = [];
+  const unfinished = [...pending, ...retryable];
+  const isCorrectionStory = (story: Story) => !!story.correctionOf || sourceItems(state, story).some(item => item.isCorrection);
+  const queueUnfinished = (corrections: boolean) => {
+    for (const story of unfinished) {
+      if (isCorrectionStory(story) !== corrections || queue.length >= storyBudget || queue.includes(story)) continue;
+      queue.push(story);
+      if (story.status === "blocked") audit(state, "selection.resumed", `Unfinished story ${story.id} resumes before ordinary new leads; ${outstanding(story)} blocking question(s) outstanding.`, story.id);
+    }
+  };
+  // Finish started corrections first, then admit new corrections before ordinary work.
+  // Only actual queued stories consume capacity: repeated completed correction records
+  // must not reserve an empty slot and starve ordinary recovery.
+  queueUnfinished(true);
+  let ordinaryQueued = false;
   for (const [key, items] of candidates) {
+    if (!items.some(item => item.isCorrection) && !ordinaryQueued) {
+      queueUnfinished(false);
+      ordinaryQueued = true;
+    }
     const id = stableId("story", `${input.mode}|${key}`);
     let story = state.stories.find(s => s.id === id);
     if (story) {
@@ -537,6 +547,8 @@ export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | 
     audit(state, "discovery.candidate_created", story.selectedReason, story.id);
     await save();
   }
+  // With no ordinary candidates (including an empty feed), still resume stored work.
+  if (!ordinaryQueued) queueUnfinished(false);
   for (const story of queue) {
     try {
       if (Date.now() >= deadline) {
