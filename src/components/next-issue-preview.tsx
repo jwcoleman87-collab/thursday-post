@@ -19,7 +19,7 @@ function ProofStory({ story, lead = false }: { story: Story; lead?: boolean }) {
     {story.draft!.deck ? <p className="paper-deck">{story.draft!.deck}</p> : null}
     <p className="paper-excerpt">{story.draft!.sentences[0]?.text}</p>
     <p className="paper-byline">By {story.draft!.byline.replace(/^By\s+/i, "")}</p>
-    <Link className="paper-continue" href={`/newsroom?story=${encodeURIComponent(story.id)}`}>Open approval package ↗</Link>
+    <Link className="paper-continue" href={`/editorial/${encodeURIComponent(story.id)}`}>Open story review ↗</Link>
   </article>;
 }
 
