@@ -37,7 +37,13 @@ jobs:
           expected={'.env.example':'1c4c1fa29b5717098b5737e1c9e6e1ed05172122','docs/AGENT_REVIEWED_DRAFT.md':'6aab1bf7660fee097ecb68e892fab0f450b8ea5a','src/app/api/editorial/route.ts':'bb739a03e38f87c806152955351f970830699643','src/components/editorial-desk.tsx':'5ee9c6c8a0f3bee9699aaba0f195a103ad027617','src/lib/assessed-draft.ts':'9b96280371b2f6d2d59e4423e68640e0f7faa544','src/lib/auth.ts':'16d11df50936c7076b4323f3e9456ee9f5da2334','src/lib/backup.ts':'deb007a156bb4ea9956bd2b683279dfaf568732d','src/lib/domain.ts':'0f0785e7c0baaf520f199bc7886fc6395b6f3150','src/lib/engine.ts':'eb753901658463ef0bf004cb9860e0e20a19c0d2','tests/assessed-draft-api.test.ts':'e1f2680322dc95b2fa801df3b84eb1c08c8523ce','tests/assessed-draft.test.ts':'7d42af61360e254022f4bc8b5aa02cb7887087d4'}
           for filename,sha in expected.items():
             assert subprocess.check_output(['git','hash-object',filename],cwd='source',text=True).strip()==sha, filename
-          print('Patch SHA256 and all 11 file blobs verified; production untouched.')
+          # A previous synthetic lease must not leak between independent API tests.
+          path=Path('source/tests/assessed-draft-api.test.ts')
+          text=path.read_text();old='await transact(d=>Object.assign(d,initialStore()));'
+          assert text.count(old)==1
+          path.write_text(text.replace(old,'await transact(d=>{delete d.lease;Object.assign(d,initialStore());});'))
+          assert subprocess.check_output(['git','hash-object','tests/assessed-draft-api.test.ts'],cwd='source',text=True).strip()=='aa4949a65af52a319504a8dd36737d778ad03279'
+          print('Patch SHA256, all file blobs and isolated-fixture amendment verified; production untouched.')
           PY
       - run: npm ci
         working-directory: source
