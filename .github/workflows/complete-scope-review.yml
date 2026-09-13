@@ -1,0 +1,86 @@
+name: Apply reviewed scope supersession fix
+on:
+  push:
+    branches: [handover/scope-review-fix]
+permissions:
+  contents: write
+jobs:
+  apply:
+    if: github.repository == 'jwcoleman87-collab/thursday-post'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Construct isolated review-fix commit
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import pathlib, subprocess
+          HEAD='a241a138d63dbfd12a7171e8a398a0e86e4eb5cf'
+          FEATURE='fix/delegated-scope-completion'
+          TARGET='handover/scope-review-patch'
+          def git(*args):
+              return subprocess.run(['git',*args],check=True,text=True,capture_output=True).stdout.strip()
+          assert git('ls-remote','origin',f'refs/heads/{FEATURE}').split()[0] == HEAD, 'Feature moved'
+          existing=subprocess.run(['git','ls-remote','--exit-code','--heads','origin',TARGET],text=True,capture_output=True)
+          assert existing.returncode == 2, 'Target already exists or check failed'
+          git('switch','-c',TARGET,HEAD)
+          p=pathlib.Path('src/lib/engine.ts')
+          old='  gap.scopeAssessment = { outcome: "not_required_for_scope", rationale, assessor: "newsroom-assessor", authorisingOwner: "James", claimIds, draftHash: story.draft!.hash, evidenceFingerprint: evidenceFingerprint(state, story), assessedAt: now() };'
+          new='''  // Preserve the previous decision before replacement: checks() will only see the new one.
+            // This also retains a same-version reassessment rather than silently overwriting its rationale.
+            if (gap.scopeAssessment) {
+              audit(state, "editorial.scope_assessment_superseded", JSON.stringify({ gapId: gap.id, question: gap.question, reason: "A new delegated assessment replaces the previous decision; its original draft and evidence bindings are retained.", assessment: structuredClone(gap.scopeAssessment) }), story.id);
+            }
+          '''+old
+          # Restore exact indentation of the locally red/green tested source.
+          new=new.replace('\n  ', '\n', 0)
+          new='  // Preserve the previous decision before replacement: checks() will only see the new one.\n  // This also retains a same-version reassessment rather than silently overwriting its rationale.\n  if (gap.scopeAssessment) {\n    audit(state, "editorial.scope_assessment_superseded", JSON.stringify({ gapId: gap.id, question: gap.question, reason: "A new delegated assessment replaces the previous decision; its original draft and evidence bindings are retained.", assessment: structuredClone(gap.scopeAssessment) }), story.id);\n  }\n'+old
+          text=p.read_text();assert text.count(old)==1
+          p.write_text(text.replace(old,new,1))
+          extra='''
+
+          test("reassessment archives the complete previous decision before replacing stale or current bindings", async () => {
+            for (const evidenceChanged of [true, false]) {
+              const { state, story, gap } = await blockedOnAngle();
+              recordScopeAssessment(state, story.id, gap.id, { ...scopeAssessmentContext(state, story.id, gap.id), rationale, claimIds: linkedClaims(story) }, true);
+              const original = structuredClone(gap.scopeAssessment!);
+              if (evidenceChanged) story.claims[0].questions.push("Additional context requiring the assessor to reread the evidence");
+              const fresh = scopeAssessmentContext(state, story.id, gap.id);
+              const replacementRationale = rationale + " Reassessed against the current archived snapshot.";
+              const before = state.audit.length;
+              recordScopeAssessment(state, story.id, gap.id, { ...fresh, rationale: replacementRationale, claimIds: linkedClaims(story) }, true);
+              const events = state.audit.slice(before);
+              const superseded = events.filter(entry => entry.action === "editorial.scope_assessment_superseded");
+              assert.equal(superseded.length, 1, "the previous decision needs exactly one structured archival event");
+              const archived = JSON.parse(superseded[0].detail);
+              assert.equal(archived.gapId, gap.id);
+              assert.equal(archived.question, gap.question);
+              assert.deepEqual(archived.assessment, original, "original rationale, actors, claims and bindings must survive");
+              assert.ok(events.indexOf(superseded[0]) < events.findIndex(entry => entry.action === "editorial.scope_assessed"));
+              assert.equal(gap.scopeAssessment!.rationale, replacementRationale);
+              assert.equal(gap.scopeAssessment!.evidenceFingerprint, fresh.expectedEvidenceFingerprint);
+              assert.equal(gap.scopeAssessment!.draftHash, original.draftHash);
+              if (evidenceChanged) assert.notEqual(gap.scopeAssessment!.evidenceFingerprint, original.evidenceFingerprint);
+              assert.equal(story.status, "waiting_approval");
+              assert.equal(gap.status, "open");
+              assert.equal(gap.resolution, undefined);
+              assert.equal(state.publications.length, 0);
+            }
+          });
+          '''
+          test=pathlib.Path('tests/scope-assessment.test.ts')
+          assert 'reassessment archives the complete previous decision' not in test.read_text()
+          test.write_text(test.read_text()+extra)
+          expected={'src/lib/engine.ts':'a252533ae1b435e8f35b4671b8d8633e8e658ccf','tests/scope-assessment.test.ts':'23cc0ff6c78d410c87a68e41b49e429999c92fde'}
+          for path,sha in expected.items(): assert git('hash-object',path)==sha, f'Postimage differs: {path}'
+          git('diff','--check');git('add','--',*expected)
+          assert set(git('diff','--cached','--name-only').splitlines())==set(expected)
+          git('config','user.name','github-actions[bot]')
+          git('config','user.email','41898282+github-actions[bot]@users.noreply.github.com')
+          git('commit','-m','Preserve superseded assessment before recording its replacement','-m','Addresses independent review on PR #4. Adds regression for changed-evidence and same-snapshot reassessment. Full original assessment is archived before replacement. Local regression fails before and passes after; full CI and final review remain required.')
+          git('push','origin',f'HEAD:refs/heads/{TARGET}')
+          print('Prepared review fix:',git('rev-parse','HEAD'))
+          PY
