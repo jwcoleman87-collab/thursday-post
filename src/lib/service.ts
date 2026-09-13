@@ -217,7 +217,7 @@ export async function publicPayload(options:{canReadPaid?:boolean}={}) {
   const {state}=await readStore();
   return {contactEmail:contactEmail(),memberAccess:Boolean(options.canReadPaid),articles:state.publications.filter(p=>p.public&&p.mode==='live'&&p.status!=='removed').sort((a,b)=>b.publishedAt.localeCompare(a.publishedAt)).slice(0,200).map(publication=>{
     const story=state.stories.find(s=>s.id===publication.storyId);
-    const ids=new Set(story?.claims.filter(c=>publication.draft.sentences.some(s=>s.claimIds.includes(c.id))).flatMap(c=>c.evidence.map(e=>e.sourceId))||[]);
+    const ids=new Set(story?.claims.filter(c=>publication.draft.sentences.some(s=>s.claimIds.includes(c.id))||publication.draft.assessorReview?.headlineClaimIds.includes(c.id)).flatMap(c=>c.evidence.map(e=>e.sourceId))||[]);
     const withdrawn=publication.status==='retracted';
     const locked=!withdrawn&&publication.access!=='public'&&!options.canReadPaid;
     const correction=state.publications.find(p=>p.correctionOf===publication.id&&p.public&&p.mode==='live'&&p.status!=='removed'&&p.status!=='retracted');

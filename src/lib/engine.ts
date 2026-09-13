@@ -4,6 +4,7 @@ import { PE_AGENTS, RESEARCH_AGENTS } from "./domain";
 import { demoResearchProvider } from "./fixtures";
 import { GATEWAY_PACING } from "./providers";
 import { checkWagering, isWagering } from "./policy";
+import { AssessedDraftInput } from "./assessed-draft";
 
 export const BUDGET = { maxStories: 3, maxLiveStories: 1, maxRounds: 2, maxLiveRounds: 1, maxLiveResearchTasks: 2, maxLiveRetries: 0, retries: 1, taskTimeoutMs: 48_000, maxRunMs: 240_000, maxFindings: 8, maxQuoteWordsPerSource: 25, maxAdditionalSources: 2, retrievalTimeoutMs: 20_000 } as const;
 const now = () => new Date().toISOString();
@@ -237,8 +238,8 @@ function assess(state: NewsroomState, story: Story) {
   }
 }
 
-export function draftHash(draft: Pick<ArticleDraft, "headline" | "byline" | "peAgentId" | "sentences" | "body" | "limitations" | "factReview" | "reviewRevision" | "label" | "deck" | "dateline" | "captions" | "access">): string {
-  return digest(JSON.stringify({ headline: draft.headline, byline: draft.byline, peAgentId: draft.peAgentId, sentences: draft.sentences, body: draft.body, limitations: draft.limitations, factReview: draft.factReview, reviewRevision: draft.reviewRevision, label: draft.label, deck: draft.deck, dateline: draft.dateline, captions: draft.captions, access: draft.access }));
+export function draftHash(draft: Pick<ArticleDraft, "headline" | "byline" | "peAgentId" | "sentences" | "body" | "limitations" | "factReview" | "assessorReview" | "reviewRevision" | "label" | "deck" | "dateline" | "captions" | "access">): string {
+  return digest(JSON.stringify({ headline: draft.headline, byline: draft.byline, peAgentId: draft.peAgentId, sentences: draft.sentences, body: draft.body, limitations: draft.limitations, factReview: draft.factReview, reviewRevision: draft.reviewRevision, label: draft.label, deck: draft.deck, dateline: draft.dateline, captions: draft.captions, access: draft.access, assessorReview: draft.assessorReview }));
 }
 
 function verifiedClaim(state: NewsroomState, story: Story, id: string): Claim | undefined {
@@ -248,6 +249,7 @@ function verifiedClaim(state: NewsroomState, story: Story, id: string): Claim | 
 function supportedSentence(state: NewsroomState, story: Story, sentence: ArticleSentence): boolean {
   if (!sentence.claimIds.length || !sentence.claimIds.every(id => verifiedClaim(state, story, id))) return false;
   if (sentence.claimIds.length === 1 && story.claims.find(c => c.id === sentence.claimIds[0])?.text === sentence.text) return true;
+  if (story.draft?.assessorReview) return assessedDraftIntact(state, story);
   return sentence.humanReviewed === true && story.draft?.factReview?.actor === "James" && story.draft.factReview.note.trim().length >= 10;
 }
 
@@ -275,7 +277,7 @@ function quotationBudgetMet(story: Story, draft: ArticleDraft): boolean {
 /** Every article sentence maps to an exact archived quotation within the per-source quote budget. */
 function draftProvenanceIntact(state: NewsroomState, story: Story): boolean {
   const draft = story.draft;
-  return !!draft?.sentences.length && draft.body === draft.sentences.map(sentence => sentence.text).join("\n\n") && quotationBudgetMet(story, draft) && draft.sentences.every(sentence => supportedSentence(state, story, sentence));
+  return !!draft?.sentences.length && (!draft.assessorReview || assessedDraftIntact(state, story)) && draft.body === draft.sentences.map(sentence => sentence.text).join("\n\n") && quotationBudgetMet(story, draft) && draft.sentences.every(sentence => supportedSentence(state, story, sentence));
 }
 
 /** The archived evidence this story currently rests on. New sources or claims change it. */
@@ -289,6 +291,79 @@ function evidenceFingerprint(state: NewsroomState, story: Story): string {
     questions: story.gaps.map(({ id, question, agentId, blocking, claimIds }) => ({ id, question, agentId, blocking, claimIds })).sort((a, b) => a.id.localeCompare(b.id)),
     editorialTone: story.editorialTone, correctionOf: story.correctionOf, wagering: story.wagering,
   }));
+}
+
+/** A delegated review is version-bound editorial judgement, not automatic fact proof. */
+function assessedDraftIntact(state: NewsroomState, story: Story): boolean {
+  const draft = story.draft, review = draft?.assessorReview;
+  if (!draft || !review || draft.factReview || draft.deck || draft.dateline || draft.captions?.length) return false;
+  if (review.actor !== "newsroom-assessor" || review.authorisingOwner !== "James" || review.note.trim().length < 20) return false;
+  if (draft.hash !== draftHash(draft) || review.evidenceFingerprint !== evidenceFingerprint(state, story)) return false;
+  if (!review.headlineClaimIds.length || !review.headlineClaimIds.every(id => verifiedClaim(state, story, id))) return false;
+  return draft.sentences.length > 0 && draft.sentences.every(sentence => !sentence.humanReviewed &&
+    sentence.claimIds.length > 0 && sentence.claimIds.every(id => verifiedClaim(state, story, id)));
+}
+
+/** Read the bindings before checking the full source, headline and every paragraph. */
+export function assessedDraftContext(state: NewsroomState, storyId: string) {
+  const story = state.stories.find(item => item.id === storyId);
+  if (!story?.draft) throw new Error("A researched story and current draft are required.");
+  return { storyId, expectedDraftHash: story.draft.hash, expectedEvidenceFingerprint: evidenceFingerprint(state, story) };
+}
+
+/**
+ * The authenticated operator records their delegated editorial review. No in-app model
+ * calls this endpoint, and it does not claim semantic proof or a human factReview.
+ * Validation/planning happens on a clone: an invalid paragraph cannot partly rewrite history.
+ */
+export function recordAssessedDraft(state: NewsroomState, storyId: string, raw: unknown, authorised: boolean): ArticleDraft {
+  if (!authorised) throw new Error("Delegated draft review is not enabled for this newsroom.");
+  const input = AssessedDraftInput.parse(raw);
+  const original = editableStory(state, storyId, input.expectedDraftHash);
+  if (original.mode !== "live") throw new Error("Delegated draft review is for live sourced articles only.");
+  if (!original.draft || original.status === "sent_back") throw new Error("Complete James's send-back before replacing the draft through delegated review.");
+  if (input.expectedEvidenceFingerprint !== evidenceFingerprint(state, original)) throw new Error("Evidence changed. Reload and review the current evidence before saving.");
+  if (original.claims.some(claim => claim.status === "disputed" || claim.evidence.some(e => e.relation === "contradicts"))) throw new Error("Resolve contradictory evidence before recording a delegated draft review.");
+  if (original.editorialTone === "B" && input.editorialTone !== "B") throw new Error("Delegated review cannot downgrade an adverse story or waive its reply requirement.");
+  const planned = structuredClone(state), story = planned.stories.find(item => item.id === storyId)!;
+  const link = (field: AssessedDraftInput["headline"]): string[] => [...new Set(field.evidence.map(reference => {
+    const source = sourceItems(planned, story).find(item => item.id === reference.sourceId);
+    if (!source || !["official", "data", "publication"].includes(source.type) || !/^https:\/\//.test(source.url) ||
+      source.demo || source.url.includes("example.invalid") || !source.content.includes(reference.quote))
+      throw new Error("Every cited passage must match a public archived source on this story exactly. Private, missing and invented evidence is refused.");
+    const text = `${source.sourceName} states: “${reference.quote}”`;
+    const id = stableId("claim", `${story.id}|record_statement|${source.id}|${text}`);
+    const existing = story.claims.find(item => item.id === id);
+    if (existing && !verifiedClaim(planned, story, id)) throw new Error("A disputed or unverified claim cannot be upgraded by a draft save.");
+    if (!existing) {
+      story.claims.push({ id, text, kind: "record_statement", agentId: 2,
+        evidence: [{ id: stableId("evidence", `${id}|${source.id}|supports`), sourceId: source.id, quote: reference.quote,
+          relation: "supports", exactMatch: true, independenceKey: source.independenceKey, recordedAt: now() }],
+        status: "verified", verificationScope: "source_statement", confidence: "high", questions: [], createdAt: now() });
+      audit(planned, "editorial.source_passage_linked", `Newsroom assessor linked exact archived passage ${id} from ${source.id}; only the source statement is verified, not its underlying assertion.`, story.id);
+    }
+    return id;
+  }))];
+  const headlineClaimIds = link(input.headline);
+  const sentences = input.paragraphs.map(field => ({ text: field.text, claimIds: link(field) }));
+  // A new version, never stripping/relabeling the old human-reviewed version in place.
+  const draft: ArticleDraft = { id: "", headline: input.headline.text, byline: `Agent ${story.peAgentId}`,
+    peAgentId: story.peAgentId, sentences, body: sentences.map(sentence => sentence.text).join("\n\n"), hash: "", createdAt: now(),
+    limitations: ["Editorial wording was checked by the newsroom assessor against the linked archived passages under delegated authority. This is not James's personal fact review or independent proof of underlying source assertions."],
+    access: story.draft!.access ?? story.access ?? "members", ...(story.draft!.label ? { label: story.draft!.label } : {}) };
+  if (!quotationBudgetMet(story, draft)) throw new Error("The article exceeds the existing per-source quotation allowance. Paraphrase or choose shorter complete quotations.");
+  const newlyAdverse = input.editorialTone === "B" && story.editorialTone !== "B";
+  story.editorialTone = input.editorialTone;
+  story.wagering ||= isWagering(draft.headline + "\n" + draft.body);
+  draft.assessorReview = { actor: "newsroom-assessor", authorisingOwner: "James", note: input.note,
+    reviewedAt: now(), evidenceFingerprint: evidenceFingerprint(planned, story), headlineClaimIds };
+  replaceDraft(planned, story, draft, "A complete draft and delegated editorial review were saved by the newsroom assessor. Publication still awaits James's decision.", newlyAdverse);
+  audit(planned, "editorial.assessed_draft_saved", `Newsroom assessor checked headline and ${sentences.length} paragraph(s) under James's delegation. No personal James review is asserted. Draft ${draft.hash}. ${input.note}`, story.id);
+  // Copy deletions as well as values: a changed adverse article must lose its old reply.
+  if (!story.rightOfReply) delete original.rightOfReply;
+  Object.assign(original, story);
+  state.audit.push(...planned.audit.slice(state.audit.length));
+  return original.draft!;
 }
 
 /**
@@ -340,7 +415,7 @@ function scopeAssessmentRefusal(state: NewsroomState, story: Story, gap: Evidenc
   if (!gap.blocking) return "This question does not block publication.";
   if (!agentFollowupGap(story, gap)) return "Only an additional reporting angle raised by a research agent can be assessed as out of scope. Missing primary records, corrections, unfinished research and James's own requests stay blocking.";
   if (operationalGap(state, story, gap)) return "Unfinished required research must be completed, not assessed as out of scope.";
-  if (!draftProvenanceIntact(state, story) || !verbatimQuotationDraft(state, story)) return "An angle can only be assessed as out of scope while the package is entirely exact archived quotations. A narrative James has written and attested — including its headline and deck — must be resolved by James.";
+  if (!draftProvenanceIntact(state, story) || (!verbatimQuotationDraft(state, story) && !assessedDraftIntact(state, story))) return "An angle can only be assessed for exact archived quotations or a current delegated-review draft. A narrative James has written and attested — including its headline and deck — must be resolved by James or replaced by a separately reviewed version, preserving its history.";
   if (story.claims.some(claim => claim.status === "disputed" || claim.evidence.some(evidence => evidence.relation === "contradicts"))) return "Contradictory evidence must be resolved, not assessed as out of scope.";
   // A withdrawn decision cannot simply be re-applied against the same reporting.
   for (const entry of state.audit.filter(entry => entry.storyId === story.id && entry.action === "editorial.scope_assessment_withdrawn")) {
@@ -440,7 +515,7 @@ function checks(state: NewsroomState, story: Story, recordInvalidation = true): 
   const allDraftText = [draft?.headline, draft?.deck, draft?.body, ...(draft?.captions ?? []).map(caption => caption.text)].filter(Boolean).join("\n");
   story.wagering ||= isWagering(allDraftText);
   const output: ComplianceCheck[] = [
-    { id: `${story.id}-evidence`, gate: "evidence", status: supported && !blockers.length ? "passed" : "blocked", message: supported && !blockers.length ? (draft?.factReview ? "James reviewed the narrative against linked archived evidence. This editorial attestation does not independently prove source assertions." : "Every article sentence maps to an exact archived quotation. Verification scope is the source statement; underlying claims remain attributed.") + (scoped.length ? ` ${scoped.length} additional reporting angle(s) assessed by the newsroom assessor as not required for this draft's scope; the original question(s) remain on the record and no missing evidence is treated as verified.` : "") : `Evidence incomplete: ${blockers.length} blocking question(s); ${supported ? "sentence provenance intact" : "missing or invalid sentence provenance"}.${scoped.length ? ` ${scoped.length} separate angle(s) are assessed as not required for this draft's scope.` : ""}`, checkedAt },
+    { id: `${story.id}-evidence`, gate: "evidence", status: supported && !blockers.length ? "passed" : "blocked", message: supported && !blockers.length ? (draft?.assessorReview ? "The newsroom assessor reviewed this version against linked archived passages under delegated authority; this is not James's personal fact review or independent verification of source assertions." : draft?.factReview ? "James reviewed the narrative against linked archived evidence. This editorial attestation does not independently prove source assertions." : "Every article sentence maps to an exact archived quotation. Verification scope is the source statement; underlying claims remain attributed.") + (scoped.length ? ` ${scoped.length} additional reporting angle(s) assessed by the newsroom assessor as not required for this draft's scope; the original question(s) remain on the record and no missing evidence is treated as verified.` : "") : `Evidence incomplete: ${blockers.length} blocking question(s); ${supported ? "sentence provenance intact" : "missing or invalid sentence provenance"}.${scoped.length ? ` ${scoped.length} separate angle(s) are assessed as not required for this draft's scope.` : ""}`, checkedAt },
     { id: `${story.id}-imagery`, gate: "imagery", status: story.media.length ? story.media.every(m => m.allowed) ? "passed" : "warning" : "not_applicable", message: story.media.length ? story.media.every(m => m.allowed) ? "All proposed images have required provenance and caption checks." : "Images with unknown provenance, context or rights are excluded from publication." : "No image is included.", checkedAt },
     checkWagering(draft ? { ...story, draft: { ...draft, body: allDraftText } } : story),
     { id: `${story.id}-publication`, gate: "publication", status: replyOutstanding ? "blocked" : "passed", message: replyOutstanding ? "Adverse reporting needs James's recorded right-of-reply outcome or reason it is not required." : story.mode === "demo" ? "Synthetic demonstration. Approval creates a private demo publication only." : "Explicit James approval must match the exact immutable draft hash before public publication.", checkedAt },
@@ -452,7 +527,7 @@ function checks(state: NewsroomState, story: Story, recordInvalidation = true): 
 export function projectScopeAssessments(state: NewsroomState): NewsroomState {
   const view = structuredClone(state);
   for (const story of view.stories) {
-    if (!story.draft || ["published", "rejected"].includes(story.status) || !story.gaps.some(gap => gap.scopeAssessment)) continue;
+    if (!story.draft || ["published", "rejected"].includes(story.status) || (!story.draft.assessorReview && !story.gaps.some(gap => gap.scopeAssessment))) continue;
     story.compliance = checks(view, story, false);
     if (story.status === "waiting_approval" && story.compliance.some(check => check.status === "blocked")) story.status = "blocked";
   }
@@ -530,6 +605,7 @@ export function editStoryDraft(state: NewsroomState, storyId: string, input: { h
   if ((input.deck?.length ?? 0) > 600 || (input.dateline?.length ?? 0) > 160 || (input.label && !["opinion", "analysis", "update", "correction", "right_of_reply"].includes(input.label)) || (input.editorialTone && !["A", "B", "N"].includes(input.editorialTone)) || (input.access && !["public", "members"].includes(input.access))) throw new Error("Check the editorial label, deck, dateline, access and internal tone.");
   if (input.captions?.some(caption => !caption.text.trim() || caption.text.length > 600 || !story.media.some(media => media.id === caption.mediaId && media.allowed) || !caption.sourceIds.length || caption.sourceIds.some(id => !story.sourceItems.includes(id)))) throw new Error("Captions need a cleared image and supporting archived sources.");
   const draft = { ...structuredClone(story.draft), headline, sentences, body: sentences.map(sentence => sentence.text).join("\n\n"), factReview: { actor: "James" as const, note, reviewedAt: now() }, ...(input.label !== undefined ? { label: input.label } : {}), ...(input.deck !== undefined ? { deck: input.deck.trim() } : {}), ...(input.dateline !== undefined ? { dateline: input.dateline.trim() } : {}), ...(input.captions !== undefined ? { captions: structuredClone(input.captions) } : {}) };
+  delete draft.assessorReview;
   if (!quotationBudgetMet(story, draft)) throw new Error("The edited article exceeds the 25-word quotation budget for an archived source. Reduce direct quotations before saving.");
   const newlyAdverse = input.editorialTone === "B" && story.editorialTone !== "B";
   if (input.editorialTone) story.editorialTone = input.editorialTone;

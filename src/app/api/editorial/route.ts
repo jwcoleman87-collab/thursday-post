@@ -1,13 +1,15 @@
 import {z} from 'zod';
-import {requireOwner,requireSameOrigin,errorResponse,HttpError,delegatedScopeAssessmentEnabled} from '@/lib/auth';
+import {AssessedDraftInput} from '@/lib/assessed-draft';
+import {requireOwner,requireSameOrigin,errorResponse,HttpError,delegatedScopeAssessmentEnabled,delegatedDraftReviewEnabled} from '@/lib/auth';
 import {readBoundedBody} from '@/lib/email';
 import {readStore,transact} from '@/lib/store';
 import {newsroomPayload} from '@/lib/service';
-import {resolveStoryGap,editStoryDraft,recordRightOfReply,createCorrectionStory,setPublicationStatus,setPublicationAccess,recordScopeAssessment,clearScopeAssessment,scopeAssessmentContext} from '@/lib/engine';
+import {resolveStoryGap,editStoryDraft,recordRightOfReply,createCorrectionStory,setPublicationStatus,setPublicationAccess,recordScopeAssessment,clearScopeAssessment,scopeAssessmentContext,recordAssessedDraft,assessedDraftContext} from '@/lib/engine';
 const note=z.string().trim().min(8).max(3000);
 const ids=z.array(z.string().min(1)).max(40);
 const rationale=z.string().trim().min(10).max(3000);
 const schema=z.discriminatedUnion('action',[
+  AssessedDraftInput.extend({action:z.literal('assessed_draft'),storyId:z.string().min(1)}).strict(),
   z.object({action:z.literal('resolve_gap'),storyId:z.string(),gapId:z.string(),note,claimIds:ids.min(1),expectedDraftHash:z.string().optional()}),
   z.object({action:z.literal('scope_assessment'),storyId:z.string(),gapId:z.string(),rationale,claimIds:ids.min(1),expectedDraftHash:z.string().length(64),expectedEvidenceFingerprint:z.string().length(64)}).strict(),
   z.object({action:z.literal('withdraw_scope_assessment'),storyId:z.string(),gapId:z.string(),note,expectedDraftHash:z.string().length(64)}).strict(),
@@ -21,6 +23,11 @@ export const runtime='nodejs';
 export async function GET(request:Request){try{
   requireOwner(request);
   const url=new URL(request.url);
+  if(url.searchParams.get('action')==='assessed_draft'){
+    const storyId=z.string().min(1).parse(url.searchParams.get('storyId'));
+    const data=await readStore();
+    return Response.json({...assessedDraftContext(data.state,storyId),enabled:delegatedDraftReviewEnabled()},{headers:{'Cache-Control':'private, no-store','Vary':'Cookie'}});
+  }
   const input=z.object({storyId:z.string().min(1),gapId:z.string().min(1)}).parse({storyId:url.searchParams.get('storyId'),gapId:url.searchParams.get('gapId')});
   const data=await readStore();
   const context=scopeAssessmentContext(data.state,input.storyId,input.gapId);
@@ -30,10 +37,12 @@ export async function POST(request:Request){try{
   requireOwner(request);requireSameOrigin(request);
   const input=schema.parse(JSON.parse(await readBoundedBody(request,150000)));
   if(input.action==='scope_assessment'&&!delegatedScopeAssessmentEnabled())throw new HttpError('Delegated scope assessment is not enabled for this newsroom.',403);
+  if(input.action==='assessed_draft'&&!delegatedDraftReviewEnabled())throw new HttpError('Delegated draft review is not enabled for this newsroom.',403);
   await transact(data=>{
     if(data.lease&&Date.parse(data.lease.expiresAt)>Date.now())throw new HttpError('Wait for the running research cycle before editing.',409);
     try{
       switch(input.action){
+        case'assessed_draft':{const {action:_action,storyId,...review}=input;recordAssessedDraft(data.state,storyId,review,delegatedDraftReviewEnabled());break;}
         case'resolve_gap':resolveStoryGap(data.state,input.storyId,input.gapId,input);break;
         case'scope_assessment':recordScopeAssessment(data.state,input.storyId,input.gapId,input,delegatedScopeAssessmentEnabled());break;
         case'withdraw_scope_assessment':clearScopeAssessment(data.state,input.storyId,input.gapId,input);break;
