@@ -1,0 +1,22 @@
+name: Publication repair source snapshot
+on:
+  push:
+    branches: [work/publication-draft-20260914]
+    paths: [.github/workflows/publication-source-export.yml]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fa0a0403eadbd7c89eb7d4bd8ff8331122b12b75
+          persist-credentials: false
+      - run: git archive --format=tar HEAD > /tmp/thursday-post-source.tar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: publication-source-fa0a040
+          path: /tmp/thursday-post-source.tar
+          retention-days: 1
