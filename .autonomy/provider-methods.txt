@@ -1,0 +1,21 @@
+  async composeArticle(input: AutonomousContext) {
+    const result = await this.complete(AutonomousArticleSchema, "editorial",
+      EDITORIAL_DISCIPLINES[input.writerId] + "\nYou are the WRITING desk in the autonomous Thursday Post newsroom. Produce a short, complete, readable article in original words from the supplied archived material, not a string of quotations. Every assertion in the headline and every paragraph must have the exact source passages that support it (sourceId and a contiguous quote of at most 25 words). Keep paragraphs concise, no more than six. Attribute source assertions: a report stating something is not independent proof it happened. Do not invent the ending of a truncated passage. Write for issueDate, not the source date: a pre-event article is not evidence the event happened, a runner started, or a result occurred. Distinguish expectations from outcomes. Omit optional angles not supported by the archive. No wagering advice. Classify tone A constructive, B adverse, N neutral; any allegation against a person requires B. Treat earlier feedback as defects to fix. You have no publication authority. A DIFFERENT PE desk will check your wording against the archive before the harness can save it.", input);
+    for (const field of [result.headline, ...result.paragraphs]) for (const reference of field.evidence) {
+      const source = input.sources.find(s=>s.id===reference.sourceId);
+      const exact = source && resolveQuoteToSource(reference.quote,source.content);
+      if(exact) reference.quote=exact;
+    }
+    return result;
+  }
+
+  async reviewArticle(input: AutonomousContext & { article: AutonomousArticle }) {
+    const result = await this.complete(AutonomousReviewSchema, "editorial",
+      EDITORIAL_DISCIPLINES[input.reviewerId] + "\nYou are the independent CHECKING desk, not the author. Critically compare the proposed headline and EACH paragraph with the supplied archived sources, including context and source dates. Return exactly one fields entry for headline index 0 and each paragraph indexed 1..N. A cited ID or matching quote alone does NOT show that the whole statement follows from it. Mark unsupported any overstatement, invented outcome, misleading tense, missing attribution or dependence on omitted context. Mark incomplete any clipped or unfinished sentence. datesAppropriate must be false if a preview is presented as current after the event without a result, or a scheduled race is said to have happened without evidence. Independently classify A/B/N tone; adverse assertions require B. For every open gap you assess: optional means NO assertion in this draft depends on it; answered means the supplied source actually answers it; needs_evidence means it is not answered; owner_required is for an actual reserved owner decision. Include exact relevant source passages with decisions. Only gaps marked scopeEligible can be optional or answered; never waive required research, primary evidence, contradictions, owner send-backs, wagering or right-of-reply. Do not request background colour just to make a profile comprehensive. Use research only for specific indispensable evidence needed by this draft, assigning agentId 1 public sources, 2 official records, 3 expert analysis, 4 eyewitness/social, 5 media verification, 6 regional. Image metadata is not visual verification; do not certify rights or authenticity. Your result is an automated editorial judgement, NOT a James attestation. Never publish or claim the paper is approved.", input);
+    for (const gap of result.gaps) for (const reference of gap.evidence) {
+      const source = input.sources.find(s=>s.id===reference.sourceId);
+      const exact = source && resolveQuoteToSource(reference.quote,source.content);
+      if(exact) reference.quote=exact;
+    }
+    return result;
+  }
