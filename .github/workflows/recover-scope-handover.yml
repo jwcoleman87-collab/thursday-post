@@ -1,0 +1,68 @@
+name: Recover reviewed scope handover
+on:
+  push:
+    branches: [handover/delegated-scope-import]
+permissions:
+  contents: write
+jobs:
+  recover:
+    if: github.repository == 'jwcoleman87-collab/thursday-post'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify archive and create review-only branch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import base64, gzip, hashlib, json, pathlib, subprocess
+          BASE = '97688892cb27b84bb1cfb3e7c38c2b0dc0598ead'
+          TARGET = 'fix/delegated-scope-completion'
+          ALLOWED = {'.env.example', 'docs/OWNER_WORKFLOW.md', 'src/app/api/editorial/route.ts', 'src/components/newsroom.tsx', 'src/components/editorial-desk.tsx', 'src/components/scope-assessment-panel.tsx', 'src/lib/auth.ts', 'src/lib/backup.ts', 'src/lib/domain.ts', 'src/lib/engine.ts', 'src/lib/service.ts', 'tests/operations.test.ts', 'tests/scope-assessment.test.ts', 'tests/scope-assessment-api.test.ts', 'tests/scope-assessment-ui.test.ts'}
+          def git(*args, **kwargs):
+              return subprocess.run(['git', *args], check=True, text=True, capture_output=True, **kwargs).stdout.strip()
+          pieces = sorted(pathlib.Path('.handover/scope-import').glob('part*'))
+          assert len(pieces) == 22, 'Incomplete handover'
+          encoded = ''.join(p.read_text() for p in pieces)
+          packed = base64.b64decode(encoded, validate=True)
+          assert hashlib.sha256(packed).hexdigest() == 'ac01225b62a6d4b90f1f563dc57b60d1066dbaa9ff43fd31bc0791b3ba7fcc83', 'Handover integrity failure'
+          raw = gzip.decompress(packed)
+          assert len(raw) == 132531, 'Unexpected manifest length'
+          manifest = json.loads(raw)
+          assert manifest['base'] == BASE and manifest['target'] == TARGET
+          assert set(manifest['allowed']) == ALLOWED
+          assert git('ls-remote', 'origin', 'refs/heads/master').split()[0] == BASE, 'Master moved; review before applying'
+          existing = subprocess.run(['git', 'ls-remote', '--exit-code', '--heads', 'origin', TARGET], capture_output=True, text=True)
+          assert existing.returncode == 2, 'Target exists or remote check failed; never overwrite'
+          git('switch', '-c', TARGET, BASE)
+          for patch in manifest['patches']:
+              git('apply', '--check', '-', input=patch)
+              git('apply', '-', input=patch)
+          for path, changes in manifest['replacements'].items():
+              assert path in ALLOWED
+              file = pathlib.Path(path)
+              text = file.read_text()
+              for old, new in changes:
+                  assert text.count(old) == 1, f'Exact replacement failed: {path}'
+                  text = text.replace(old, new, 1)
+              file.write_text(text)
+          expected = {'src/lib/engine.ts':'cdc1abc2e26cb829d904dd2b4cdb144e7d4810b9', 'src/app/api/editorial/route.ts':'db7a833cf8e2ba281b479ebc599a50a54e2d1496', 'tests/scope-assessment.test.ts':'f26265f929d93e950340ada2cb317e1309e4b415'}
+          for path, sha in expected.items():
+              assert git('hash-object', path) == sha, f'Postimage mismatch: {path}'
+          git('diff', '--exit-code', BASE, '--', 'package-lock.json')
+          git('diff', '--check')
+          git('add', '--', *sorted(ALLOWED))
+          assert set(git('diff', '--cached', '--name-only', BASE).splitlines()) == ALLOWED, 'Unexpected changed paths'
+          assert not git('diff', '--name-only'), 'Unstaged changes remain'
+          assert not git('ls-files', '--others', '--exclude-standard'), 'Unexpected untracked files'
+          git('config', 'user.name', 'github-actions[bot]')
+          git('config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com')
+          git('commit', '-m', 'Complete delegated editorial scope handover with version-bound review and withdrawal', '-m', 'Recovered from owner-supplied Claude commits e46169e, 3967d07, ec5c47b plus supplied untested changes. Includes separately tested stale-evidence, audit and withdrawal fixes. Final full CI and independent review are required. No production or publication action.')
+          assert git('ls-remote', 'origin', 'refs/heads/master').split()[0] == BASE, 'Master moved; do not push stale work'
+          git('push', 'origin', f'HEAD:refs/heads/{TARGET}')
+          print('Review branch:', TARGET)
+          print('Head:', git('rev-parse', 'HEAD'))
+          print(git('diff', '--stat', BASE, 'HEAD'))
+          PY
