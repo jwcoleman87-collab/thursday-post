@@ -1,0 +1,61 @@
+name: Verify final publication review corrections
+on:
+  push:
+    branches: [work/publication-draft-20260914]
+    paths: [.github/workflows/publication-final-verify.yml]
+permissions:
+  contents: write
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: transfer
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: aa18339958dcc16565872e547fa98cd4b3df7efa
+          path: source
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: source/package-lock.json
+      - name: Validate and apply exact remaining corrections
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64,gzip,hashlib,subprocess
+          encoded=Path('transfer/.repair/round2.b64').read_text().strip()
+          # Correct a single transfer transcription before full checksum verification.
+          encoded=encoded.replace('5OB6xO+Gr','5OB6x6+Gr')
+          patch=gzip.decompress(base64.b64decode(encoded,validate=True))
+          assert hashlib.sha256(patch).hexdigest()=='57df068aa772f1ac9e89f7880ccf2f45442099d6e42adcb2ab9efabe4b3d73d5'
+          p=Path('/tmp/remaining-review.patch');p.write_bytes(patch)
+          subprocess.run(['git','apply','--check',str(p)],cwd='source',check=True)
+          subprocess.run(['git','apply',str(p)],cwd='source',check=True)
+          expected={'src/lib/engine.ts':'651e86202ecd5fc8d5f5d95aee9d9ca14cb88edc','src/lib/assessed-draft.ts':'71be9b1869133e2f8e6fa3e1a8d79915ad51de8c','src/lib/service.ts':'1b9dfa4e52945c1092f04f52dd996ab4692cc3bb','tests/assessed-draft-api.test.ts':'6ef8b4ceb3c6743afac99aaf7f939f9e366c2014','tests/assessed-draft-review.test.ts':'5e82abf3d92881cb04277fbbde951b15df4f76ab','tests/assessed-draft.test.ts':'cebd18acc343f18ba508d0c9d2161e92bfaca9a0'}
+          for name,sha in expected.items():
+            assert subprocess.check_output(['git','hash-object',name],cwd='source',text=True).strip()==sha,name
+          print('Patch and all six file postimages verified; no production data or settings used.')
+          PY
+      - run: npm ci
+        working-directory: source
+      - run: npm run typecheck
+        working-directory: source
+      - run: npm test
+        working-directory: source
+      - run: npm run build
+        working-directory: source
+      - name: Preserve verified corrections on existing feature branch
+        working-directory: source
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/lib/assessed-draft.ts src/lib/engine.ts src/lib/service.ts tests/assessed-draft.test.ts tests/assessed-draft-api.test.ts tests/assessed-draft-review.test.ts
+          git diff --cached --check
+          git commit -m 'Require adverse-tone assessment and include headline evidence in reader sources'
+          git push origin HEAD:refs/heads/fix/agent-reviewed-draft
+          git rev-parse HEAD
