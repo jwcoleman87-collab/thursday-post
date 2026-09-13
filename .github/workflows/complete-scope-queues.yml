@@ -1,0 +1,78 @@
+name: Apply scope queue review fix
+on:
+  push:
+    branches: [handover/scope-queue-fix]
+permissions:
+  contents: write
+jobs:
+  apply:
+    if: github.repository == 'jwcoleman87-collab/thursday-post'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Construct isolated queue review-fix commit
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import pathlib, subprocess
+          HEAD='0333362d92d565cb3f8751411fdc9a0a313aa0ca'
+          FEATURE='fix/delegated-scope-completion'
+          TARGET='handover/scope-queue-patch'
+          def git(*args): return subprocess.run(['git',*args],check=True,text=True,capture_output=True).stdout.strip()
+          assert git('ls-remote','origin',f'refs/heads/{FEATURE}').split()[0] == HEAD, 'Feature moved'
+          existing=subprocess.run(['git','ls-remote','--exit-code','--heads','origin',TARGET],text=True,capture_output=True)
+          assert existing.returncode == 2, 'Target exists or check failed'
+          git('switch','-c',TARGET,HEAD)
+          p=pathlib.Path('src/lib/engine.ts'); text=p.read_text()
+          changes=[('const gapRequests = story.gaps.filter(g => g.status === "open" && g.blocking).map','const gapRequests = story.gaps.filter(g => g.status === "open" && g.blocking && !activeScopeAssessment(state, story, g)).map'),('const followups = [...new Map(story.gaps.filter(g => g.status === "open").map','const followups = [...new Map(story.gaps.filter(g => g.status === "open" && !activeScopeAssessment(state, story, g)).map')]
+          for old,new in changes:
+              assert text.count(old)==1
+              text=text.replace(old,new,1)
+          p.write_text(text)
+          extra='''
+
+          test("active scope decisions do not consume initial or targeted research slots on an unrelated send-back", async () => {
+            for (const maxRounds of [1, 2]) {
+              const { state, story, gap } = await blockedOnAngle();
+              recordScopeAssessment(state, story.id, gap.id, { ...scopeAssessmentContext(state, story.id, gap.id), rationale, claimIds: linkedClaims(story) }, true);
+              decideStory(state, story.id, "send_back", "Check the meeting date against the supplied official record.", false);
+              // The assessor has inspected the changed question set; the optional angle remains optional.
+              recordScopeAssessment(state, story.id, gap.id, { ...scopeAssessmentContext(state, story.id, gap.id), rationale, claimIds: linkedClaims(story) }, true);
+              const calls: string[] = [];
+              const researcher = provider();
+              await runNewsroom(state, { mode: "live", items: [], ...CAPS, maxRounds, maxResearchTasks: 1 }, { ...researcher, async research(request) { calls.push(request.question); return researcher.research(request); } });
+              assert.ok(calls.length > 0);
+              assert.ok(calls.every(question => question.startsWith("James requests:")), "neither research queue may spend capacity on the active optional-angle assessment");
+              assert.equal(gap.status, "open", "scoping still does not pretend to answer the question");
+              assert.equal(state.publications.length, 0);
+            }
+          });
+
+          test("a stale scope decision does not suppress the original question from research", async () => {
+            const { state, story, gap } = await blockedOnAngle();
+            recordScopeAssessment(state, story.id, gap.id, { ...scopeAssessmentContext(state, story.id, gap.id), rationale, claimIds: linkedClaims(story) }, true);
+            decideStory(state, story.id, "send_back", "Review this changed source context before publication.", false);
+            // The owner request changes the evidence/question fingerprint; do not renew the assessment.
+            const calls: string[] = [];
+            const researcher = provider();
+            await runNewsroom(state, { mode: "live", items: [], ...CAPS, maxResearchTasks: 1 }, { ...researcher, async research(request) { calls.push(request.question); return researcher.research(request); } });
+            assert.ok(calls.includes(ANGLE), "stale decisions must not suppress necessary re-research");
+            assert.equal(state.publications.length, 0);
+          });
+          '''
+          test=pathlib.Path('tests/scope-assessment.test.ts')
+          assert 'active scope decisions do not consume' not in test.read_text()
+          test.write_text(test.read_text()+extra)
+          expected={'src/lib/engine.ts':'fd37d4267eeb6c5ffc4cefa50573b6c73afb3a4a','tests/scope-assessment.test.ts':'0f22745daeaccd62348767f2e46c8f3d22d8bcb2'}
+          for path,sha in expected.items(): assert git('hash-object',path)==sha, f'Postimage differs: {path}'
+          git('diff','--check');git('add','--',*expected)
+          assert set(git('diff','--cached','--name-only').splitlines())==set(expected)
+          git('config','user.name','github-actions[bot]')
+          git('config','user.email','41898282+github-actions[bot]@users.noreply.github.com')
+          git('commit','-m','Skip active scoped angles in both research queues','-m','Addresses independent PR #4 P2 review. Current delegated scope assessments must not displace owner send-back work. Stale or withdrawn assessments remain researchable. New regressions exercise one-slot initial and targeted queues and stale bindings. No quota, publication or evidence-rule changes.')
+          git('push','origin',f'HEAD:refs/heads/{TARGET}')
+          print('Prepared queue fix:',git('rev-parse','HEAD'))
+          PY
