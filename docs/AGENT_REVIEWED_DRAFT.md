@@ -11,3 +11,11 @@ No actor, verdict, humanReviewed, authority, access or status fields are accepte
 Where an agent-raised optional angle genuinely supports no assertion in the new article, use the existing version-bound `scope_assessment` action AFTER saving and rereading the new draft/evidence. Never classify necessary evidence as optional. Human edits, changed evidence, disputes, incomplete research, owner send-backs and legal/reply controls are not waived.
 
 Verify the full saved draft and review link on the owner pages. No GO call is needed solely to save a checked draft or assess an optional angle. Do not approve, publish or SEND during this verification. For Wild Monarch, do not present the pre-13-September preview as an upcoming race or invent a result.
+
+## Source identity and reply review
+
+Identical passages on different archive URLs remain distinct evidence: generated claim identity includes the selected source ID. The saved article cannot silently substitute an older URL from the same publisher.
+
+Changing an adverse article invalidates and removes its previous right-of-reply outcome from current state while preserving the audit. Saving the replacement a second time cannot reinstate the old outcome. Any required fresh reply decision still blocks publication.
+
+Both cases were reproduced against the first implementation and corrected in `86c108c43088c089add865c52fb5db095b987a19`. Full tests, typecheck and build passed in verification run `34787215531`. These are synthetic regression results, not a claim that the live article has been saved or published.
