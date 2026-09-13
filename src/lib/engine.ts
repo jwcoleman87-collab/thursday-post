@@ -381,6 +381,11 @@ export function recordScopeAssessment(state: NewsroomState, storyId: string, gap
   const rationale = input.rationale.trim();
   const claimIds = [...new Set(input.claimIds)];
   if (rationale.length < 10 || rationale.length > 3000 || !claimIds.length || claimIds.length > 12 || !claimIds.every(id => verifiedClaim(state, story, id) && story.draft!.sentences.some(sentence => sentence.claimIds.includes(id)))) throw new Error("Record the specific rationale and link verified claims from this story showing the angle supports no assertion in the draft.");
+  // Preserve the previous decision before replacement: checks() will only see the new one.
+  // This also retains a same-version reassessment rather than silently overwriting its rationale.
+  if (gap.scopeAssessment) {
+    audit(state, "editorial.scope_assessment_superseded", JSON.stringify({ gapId: gap.id, question: gap.question, reason: "A new delegated assessment replaces the previous decision; its original draft and evidence bindings are retained.", assessment: structuredClone(gap.scopeAssessment) }), story.id);
+  }
   gap.scopeAssessment = { outcome: "not_required_for_scope", rationale, assessor: "newsroom-assessor", authorisingOwner: "James", claimIds, draftHash: story.draft!.hash, evidenceFingerprint: evidenceFingerprint(state, story), assessedAt: now() };
   audit(state, "editorial.scope_assessed", `Newsroom assessor recorded "${SCOPE_ASSESSMENT_OUTCOME}" for ${gap.id} under James's standing delegation; James remains the authorising owner and the only publication approver. This is not a verification of missing evidence and not a human claim review. Original question: ${gap.question} Rationale: ${rationale} Supporting claims: ${claimIds.join(", ")} Bound to draft ${gap.scopeAssessment.draftHash} and evidence ${gap.scopeAssessment.evidenceFingerprint}.`, story.id);
   settleAfterScopeChange(state, story, "A reporting angle was assessed as outside this draft's scope by the newsroom assessor. The original question stays on the record and publication still requires James's explicit approval.");

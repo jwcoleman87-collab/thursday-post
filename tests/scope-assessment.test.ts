@@ -271,3 +271,33 @@ test("wagering and disputed claims stay blocked under delegated scope assessment
   disputed.story.claims.push({ ...structuredClone(disputed.story.claims[0]), id: "disputed-other", status: "disputed" });
   assert.throws(() => recordScopeAssessment(disputed.state, disputed.story.id, disputed.gap.id, { ...scopeAssessmentContext(disputed.state, disputed.story.id, disputed.gap.id), rationale, claimIds: linkedClaims(disputed.story) }, true), /Contradictory evidence/);
 });
+
+
+test("reassessment archives the complete previous decision before replacing stale or current bindings", async () => {
+  for (const evidenceChanged of [true, false]) {
+    const { state, story, gap } = await blockedOnAngle();
+    recordScopeAssessment(state, story.id, gap.id, { ...scopeAssessmentContext(state, story.id, gap.id), rationale, claimIds: linkedClaims(story) }, true);
+    const original = structuredClone(gap.scopeAssessment!);
+    if (evidenceChanged) story.claims[0].questions.push("Additional context requiring the assessor to reread the evidence");
+    const fresh = scopeAssessmentContext(state, story.id, gap.id);
+    const replacementRationale = rationale + " Reassessed against the current archived snapshot.";
+    const before = state.audit.length;
+    recordScopeAssessment(state, story.id, gap.id, { ...fresh, rationale: replacementRationale, claimIds: linkedClaims(story) }, true);
+    const events = state.audit.slice(before);
+    const superseded = events.filter(entry => entry.action === "editorial.scope_assessment_superseded");
+    assert.equal(superseded.length, 1, "the previous decision needs exactly one structured archival event");
+    const archived = JSON.parse(superseded[0].detail);
+    assert.equal(archived.gapId, gap.id);
+    assert.equal(archived.question, gap.question);
+    assert.deepEqual(archived.assessment, original, "original rationale, actors, claims and bindings must survive");
+    assert.ok(events.indexOf(superseded[0]) < events.findIndex(entry => entry.action === "editorial.scope_assessed"));
+    assert.equal(gap.scopeAssessment!.rationale, replacementRationale);
+    assert.equal(gap.scopeAssessment!.evidenceFingerprint, fresh.expectedEvidenceFingerprint);
+    assert.equal(gap.scopeAssessment!.draftHash, original.draftHash);
+    if (evidenceChanged) assert.notEqual(gap.scopeAssessment!.evidenceFingerprint, original.evidenceFingerprint);
+    assert.equal(story.status, "waiting_approval");
+    assert.equal(gap.status, "open");
+    assert.equal(gap.resolution, undefined);
+    assert.equal(state.publications.length, 0);
+  }
+});
