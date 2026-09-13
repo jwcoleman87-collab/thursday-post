@@ -81,6 +81,8 @@ test('backup contains complete private source data and named documents, validate
   const populatedState = (await readStore()).state;
   await runNewsroom(populatedState, { mode: 'demo', items: DEMO_ITEMS });
   decideStory(populatedState, populatedState.stories[0].id, 'approve', 'Reviewed synthetic restore fixture', false);
+  // A recorded delegated scope assessment must survive export; the gap schema is strict.
+  populatedState.stories[0].gaps.push({ id: 'gap-backupscopefixture01', question: 'Optional extra profile detail?', agentId: 6, status: 'open', blocking: true, claimIds: [], createdAt: '2026-09-12T00:00:00.000Z', scopeAssessment: { outcome: 'not_required_for_scope', rationale: 'The draft asserts nothing this angle would support.', assessor: 'newsroom-assessor', authorisingOwner: 'James', claimIds: ['claim-backupscopefixture'], draftHash: 'a'.repeat(64), evidenceFingerprint: 'b'.repeat(64), assessedAt: '2026-09-12T00:00:00.000Z' } });
   await transact(data => { data.state = populatedState; });
   await updateDocument('fixture-private-document', () => ({ notes: [] as string[] }), data => { data.notes.push('PRIVATE_DOCUMENT_VALUE'); });
   const store = await readStore(); const documents = await exportDocuments();
@@ -90,6 +92,7 @@ test('backup contains complete private source data and named documents, validate
   assert.ok(JSON.stringify(backup).includes('PRIVATE_RAW_ORIGINAL'));
   const serialized = JSON.stringify(backup);
   assert.deepEqual(parseBackup(serialized), backup);
+  assert.equal(backup.payload.store.state.stories[0].gaps.at(-1)!.scopeAssessment!.assessor, 'newsroom-assessor');
   assert.throws(() => parseBackup(serialized.replace('PRIVATE_DOCUMENT_VALUE', 'TAMPERED_DOCUMENT')), /integrity/);
   assert.throws(() => parseBackup({ ...backup, unexpected: true }), /validation/);
   const target = join(directory, 'restored.sqlite');

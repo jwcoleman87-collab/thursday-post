@@ -272,21 +272,191 @@ function quotationBudgetMet(story: Story, draft: ArticleDraft): boolean {
   return true;
 }
 
-function checks(state: NewsroomState, story: Story): ComplianceCheck[] {
+/** Every article sentence maps to an exact archived quotation within the per-source quote budget. */
+function draftProvenanceIntact(state: NewsroomState, story: Story): boolean {
+  const draft = story.draft;
+  return !!draft?.sentences.length && draft.body === draft.sentences.map(sentence => sentence.text).join("\n\n") && quotationBudgetMet(story, draft) && draft.sentences.every(sentence => supportedSentence(state, story, sentence));
+}
+
+/** The archived evidence this story currently rests on. New sources or claims change it. */
+function evidenceFingerprint(state: NewsroomState, story: Story): string {
+  // Bind to evidence contents, not counts: same-length edits and changed relations matter.
+  return digest(JSON.stringify({
+    sources: [...story.sourceItems].sort().map(id => [id, state.sourceItems.find(source => source.id === id) ?? null]),
+    claims: [...story.claims].sort((a, b) => a.id.localeCompare(b.id)).map(claim => ({
+      ...claim, evidence: [...claim.evidence].sort((a, b) => a.id.localeCompare(b.id)),
+    })),
+    questions: story.gaps.map(({ id, question, agentId, blocking, claimIds }) => ({ id, question, agentId, blocking, claimIds })).sort((a, b) => a.id.localeCompare(b.id)),
+    editorialTone: story.editorialTone, correctionOf: story.correctionOf, wagering: story.wagering,
+  }));
+}
+
+/**
+ * A follow-up question a research agent raised for extra colour, identified by its stable key.
+ * Missing primary records, corrections, task failures, budget deferrals and James's own
+ * send-back requests derive from different keys and can never match, so they stay blocking.
+ */
+function agentFollowupGap(story: Story, gap: EvidenceGap): boolean {
+  return gap.id === stableId("gap", `${story.id}|editorial-${gap.question}`);
+}
+
+/** An assessment counts only while the draft and evidence it was made against are unchanged. */
+function activeScopeAssessment(state: NewsroomState, story: Story, gap: EvidenceGap): boolean {
+  const assessment = gap.scopeAssessment;
+  return !!assessment && !!story.draft && gap.status === "open" && gap.blocking
+    && assessment.outcome === "not_required_for_scope" && assessment.assessor === "newsroom-assessor"
+    && assessment.authorisingOwner === "James" && assessment.draftHash === story.draft.hash
+    && draftHash(story.draft) === story.draft.hash
+    && assessment.evidenceFingerprint === evidenceFingerprint(state, story)
+    && scopeAssessmentRefusal(state, story, gap) === null
+    && assessment.claimIds.length > 0 && assessment.claimIds.every(id =>
+      story.draft!.sentences.some(sentence => sentence.claimIds.includes(id)) && !!verifiedClaim(state, story, id));
+}
+
+/**
+ * Every sentence is the exact text of a verified claim AND James has written none of the
+ * package. Once he saves a narrative, editStoryDraft also takes his headline, deck, dateline
+ * and captions verbatim, and supportedSentence accepts any prose under his attestation, so
+ * assertions can live outside the quotations. Only he can rule a question out beneath those.
+ */
+function verbatimQuotationDraft(state: NewsroomState, story: Story): boolean {
+  const draft = story.draft;
+  if (!draft?.sentences.length || draft.factReview) return false;
+  // Engine-generated briefings have a fixed, non-factual heading and no free prose fields.
+  const heading = `${story.mode === "demo" ? "Demo: " : ""}Thoroughbred racing — ${PE_AGENTS[story.peAgentId - 1].name.toLowerCase()} briefing`;
+  if (draft.headline !== heading || draft.deck || draft.dateline || draft.captions?.length) return false;
+  return draft.sentences.every(sentence => sentence.claimIds.length === 1 && !!verifiedClaim(state, story, sentence.claimIds[0]) && story.claims.find(claim => claim.id === sentence.claimIds[0])?.text === sentence.text);
+}
+
+/**
+ * Server-side authority: the caller cannot assert an actor or a verdict. Eligibility is
+ * re-derived from stored state every time. The package must still be entirely exact archived
+ * quotations: once James writes a narrative, its headline, deck and prose can assert things no
+ * quotation carries, so only he can rule a question out from underneath them.
+ */
+function scopeAssessmentRefusal(state: NewsroomState, story: Story, gap: EvidenceGap): string | null {
+  if (!story.draft) return "A researched draft is required before a scope assessment.";
+  if (gap.status !== "open") return "An open evidence question is required.";
+  if (!gap.blocking) return "This question does not block publication.";
+  if (!agentFollowupGap(story, gap)) return "Only an additional reporting angle raised by a research agent can be assessed as out of scope. Missing primary records, corrections, unfinished research and James's own requests stay blocking.";
+  if (operationalGap(state, story, gap)) return "Unfinished required research must be completed, not assessed as out of scope.";
+  if (!draftProvenanceIntact(state, story) || !verbatimQuotationDraft(state, story)) return "An angle can only be assessed as out of scope while the package is entirely exact archived quotations. A narrative James has written and attested — including its headline and deck — must be resolved by James.";
+  if (story.claims.some(claim => claim.status === "disputed" || claim.evidence.some(evidence => evidence.relation === "contradicts"))) return "Contradictory evidence must be resolved, not assessed as out of scope.";
+  // A withdrawn decision cannot simply be re-applied against the same reporting.
+  for (const entry of state.audit.filter(entry => entry.storyId === story.id && entry.action === "editorial.scope_assessment_withdrawn")) {
+    try {
+      const withdrawal = JSON.parse(entry.detail);
+      if (withdrawal.gapId === gap.id && withdrawal.assessment?.draftHash === story.draft.hash && withdrawal.assessment.evidenceFingerprint === evidenceFingerprint(state, story))
+        return "James withdrew this assessment for the unchanged draft and evidence. Complete further reporting before reassessment.";
+    } catch { /* Older text-only audit records remain historical, not authorisation. */ }
+  }
+  return null;
+}
+
+export const SCOPE_ASSESSMENT_OUTCOME = "Additional reporting angle not required for this draft's scope.";
+
+/** Owner-only API supplies these bindings before the delegated assessor reviews the material. */
+export function scopeAssessmentContext(state: NewsroomState, storyId: string, gapId: string) {
+  const story = state.stories.find(item => item.id === storyId);
+  const gap = story?.gaps.find(item => item.id === gapId);
+  if (!story || !gap || !story.draft) throw new Error("A researched story and an existing question are required.");
+  const refusal = scopeAssessmentRefusal(state, story, gap);
+  return { storyId, gapId, expectedDraftHash: story.draft.hash, expectedEvidenceFingerprint: evidenceFingerprint(state, story), eligible: refusal === null, refusal };
+}
+
+/**
+ * Records the delegated scope assessment. `authorised` is supplied by the server from its own
+ * configuration, never from the request body, so submitting an actor name grants nothing. This
+ * neither marks evidence verified nor attests a human review: it does not touch gap.resolution,
+ * the draft, or factReview, and James remains the only publication approver.
+ */
+export function recordScopeAssessment(state: NewsroomState, storyId: string, gapId: string, input: { rationale: string; claimIds: string[]; expectedDraftHash: string; expectedEvidenceFingerprint: string }, authorised: boolean): Story {
+  if (!authorised) throw new Error("Delegated scope assessment is not enabled for this newsroom.");
+  const story = editableStory(state, storyId, input.expectedDraftHash);
+  const gap = story.gaps.find(item => item.id === gapId);
+  if (!gap) throw new Error("An open evidence question is required.");
+  const refusal = scopeAssessmentRefusal(state, story, gap);
+  if (refusal) throw new Error(refusal);
+  if (input.expectedEvidenceFingerprint !== evidenceFingerprint(state, story)) throw new Error("Evidence changed since the assessment was prepared. Reload the evidence and reassess this question.");
+  const rationale = input.rationale.trim();
+  const claimIds = [...new Set(input.claimIds)];
+  if (rationale.length < 10 || rationale.length > 3000 || !claimIds.length || claimIds.length > 12 || !claimIds.every(id => verifiedClaim(state, story, id) && story.draft!.sentences.some(sentence => sentence.claimIds.includes(id)))) throw new Error("Record the specific rationale and link verified claims from this story showing the angle supports no assertion in the draft.");
+  // Preserve the previous decision before replacement: checks() will only see the new one.
+  // This also retains a same-version reassessment rather than silently overwriting its rationale.
+  if (gap.scopeAssessment) {
+    audit(state, "editorial.scope_assessment_superseded", JSON.stringify({ gapId: gap.id, question: gap.question, reason: "A new delegated assessment replaces the previous decision; its original draft and evidence bindings are retained.", assessment: structuredClone(gap.scopeAssessment) }), story.id);
+  }
+  gap.scopeAssessment = { outcome: "not_required_for_scope", rationale, assessor: "newsroom-assessor", authorisingOwner: "James", claimIds, draftHash: story.draft!.hash, evidenceFingerprint: evidenceFingerprint(state, story), assessedAt: now() };
+  audit(state, "editorial.scope_assessed", `Newsroom assessor recorded "${SCOPE_ASSESSMENT_OUTCOME}" for ${gap.id} under James's standing delegation; James remains the authorising owner and the only publication approver. This is not a verification of missing evidence and not a human claim review. Original question: ${gap.question} Rationale: ${rationale} Supporting claims: ${claimIds.join(", ")} Bound to draft ${gap.scopeAssessment.draftHash} and evidence ${gap.scopeAssessment.evidenceFingerprint}.`, story.id);
+  settleAfterScopeChange(state, story, "A reporting angle was assessed as outside this draft's scope by the newsroom assessor. The original question stays on the record and publication still requires James's explicit approval.");
+  return story;
+}
+
+/**
+ * James's own send-back must survive an unrelated scope assessment: downgrading it to blocked
+ * would strand the story, because a blocked story with no operational gap is never requeued.
+ */
+function settleAfterScopeChange(state: NewsroomState, story: Story, detail: string) {
+  story.compliance = checks(state, story);
+  if (story.status === "sent_back") { story.updatedAt = now(); return; }
+  transition(state, story, story.compliance.some(check => check.status === "blocked") ? "blocked" : "waiting_approval", detail);
+}
+
+/** James's kill switch: withdrawing a delegated assessment returns the question to blocking. */
+export function clearScopeAssessment(state: NewsroomState, storyId: string, gapId: string, input: { note: string; expectedDraftHash: string }): Story {
+  const story = editableStory(state, storyId, input.expectedDraftHash);
+  const gap = story.gaps.find(item => item.id === gapId);
+  if (!gap?.scopeAssessment) throw new Error("This question has no delegated scope assessment to withdraw.");
+  const note = input.note.trim();
+  if (note.length < 8 || note.length > 3000) throw new Error("Record why the delegated scope assessment is withdrawn.");
+  const assessment = structuredClone(gap.scopeAssessment);
+  delete gap.scopeAssessment;
+  audit(state, "editorial.scope_assessment_withdrawn", JSON.stringify({ actor: "James", gapId, question: gap.question, note, assessment }), story.id);
+  // This is an explicit owner request for more reporting, not a publication approval.
+  // Advance the existing send-back revision so the old completed question task is not reused.
+  const createdAt = now();
+  story.approvals.push({ id: stableId("approval", `${story.id}|${story.approvals.length}|scope-withdrawal`), decision: "send_back", note: `Delegated scope assessment withdrawn for ${gap.id}: ${note}`, actor: "James", draftHash: story.draft!.hash, wageringAcknowledged: false, createdAt });
+  story.compliance = checks(state, story);
+  transition(state, story, "sent_back", "James withdrew a delegated scope assessment. The evidence question returns to the research controller for the next run.");
+  return story;
+}
+
+function checks(state: NewsroomState, story: Story, recordInvalidation = true): ComplianceCheck[] {
   const checkedAt = now();
   const draft = story.draft;
-  const supported = !!draft?.sentences.length && draft.body === draft.sentences.map(sentence => sentence.text).join("\n\n") && quotationBudgetMet(story, draft) && draft.sentences.every(sentence => supportedSentence(state, story, sentence));
-  const blockers = story.gaps.filter(g => g.status === "open" && g.blocking);
+  // A scope assessment is void the moment its draft or evidence moves. Discard it here rather
+  // than leaving a stale record the approval screen would show as a live decision; the original
+  // assessment stays in the audit trail.
+  for (const gap of story.gaps) {
+    if (!gap.scopeAssessment || activeScopeAssessment(state, story, gap)) continue;
+    const assessment = structuredClone(gap.scopeAssessment);
+    delete gap.scopeAssessment;
+    if (recordInvalidation) audit(state, "editorial.scope_assessment_superseded", JSON.stringify({ gapId: gap.id, question: gap.question, reason: "Reporting or evidence changed; the earlier delegated scope decision no longer applies.", assessment }), story.id);
+  }
+  const supported = draftProvenanceIntact(state, story);
+  const blockers = story.gaps.filter(g => g.status === "open" && g.blocking && !activeScopeAssessment(state, story, g));
+  const scoped = story.gaps.filter(g => g.status === "open" && g.blocking && activeScopeAssessment(state, story, g));
   const replyOutstanding = story.editorialTone === "B" && (!story.rightOfReply || story.rightOfReply.status === "requested");
   const allDraftText = [draft?.headline, draft?.deck, draft?.body, ...(draft?.captions ?? []).map(caption => caption.text)].filter(Boolean).join("\n");
   story.wagering ||= isWagering(allDraftText);
   const output: ComplianceCheck[] = [
-    { id: `${story.id}-evidence`, gate: "evidence", status: supported && !blockers.length ? "passed" : "blocked", message: supported && !blockers.length ? draft?.factReview ? "James reviewed the narrative against linked archived evidence. This editorial attestation does not independently prove source assertions." : "Every article sentence maps to an exact archived quotation. Verification scope is the source statement; underlying claims remain attributed." : `Evidence incomplete: ${blockers.length} blocking question(s); ${supported ? "sentence provenance intact" : "missing or invalid sentence provenance"}.`, checkedAt },
+    { id: `${story.id}-evidence`, gate: "evidence", status: supported && !blockers.length ? "passed" : "blocked", message: supported && !blockers.length ? (draft?.factReview ? "James reviewed the narrative against linked archived evidence. This editorial attestation does not independently prove source assertions." : "Every article sentence maps to an exact archived quotation. Verification scope is the source statement; underlying claims remain attributed.") + (scoped.length ? ` ${scoped.length} additional reporting angle(s) assessed by the newsroom assessor as not required for this draft's scope; the original question(s) remain on the record and no missing evidence is treated as verified.` : "") : `Evidence incomplete: ${blockers.length} blocking question(s); ${supported ? "sentence provenance intact" : "missing or invalid sentence provenance"}.${scoped.length ? ` ${scoped.length} separate angle(s) are assessed as not required for this draft's scope.` : ""}`, checkedAt },
     { id: `${story.id}-imagery`, gate: "imagery", status: story.media.length ? story.media.every(m => m.allowed) ? "passed" : "warning" : "not_applicable", message: story.media.length ? story.media.every(m => m.allowed) ? "All proposed images have required provenance and caption checks." : "Images with unknown provenance, context or rights are excluded from publication." : "No image is included.", checkedAt },
     checkWagering(draft ? { ...story, draft: { ...draft, body: allDraftText } } : story),
     { id: `${story.id}-publication`, gate: "publication", status: replyOutstanding ? "blocked" : "passed", message: replyOutstanding ? "Adverse reporting needs James's recorded right-of-reply outcome or reason it is not required." : story.mode === "demo" ? "Synthetic demonstration. Approval creates a private demo publication only." : "Explicit James approval must match the exact immutable draft hash before public publication.", checkedAt },
   ];
   return output;
+}
+
+/** Recompute owner-facing validity on a clone; never write audit events from a read. */
+export function projectScopeAssessments(state: NewsroomState): NewsroomState {
+  const view = structuredClone(state);
+  for (const story of view.stories) {
+    if (!story.draft || ["published", "rejected"].includes(story.status) || !story.gaps.some(gap => gap.scopeAssessment)) continue;
+    story.compliance = checks(view, story, false);
+    if (story.status === "waiting_approval" && story.compliance.some(check => check.status === "blocked")) story.status = "blocked";
+  }
+  return view;
 }
 
 function editableStory(state: NewsroomState, storyId: string, expectedDraftHash?: string): Story {
@@ -566,7 +736,7 @@ export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | 
       // commissions on recovery as well as open gaps; the task filter below removes
       // work already completed against this source/review version.
       const commissions = story.researchAgentIds.map(agentId => ({ agentId, question: commission(agentId) }));
-      const gapRequests = story.gaps.filter(g => g.status === "open" && g.blocking).map(g => ({ agentId: g.agentId, question: operationalGap(state, story, g) ? commission(g.agentId) : g.question }));
+      const gapRequests = story.gaps.filter(g => g.status === "open" && g.blocking && !activeScopeAssessment(state, story, g)).map(g => ({ agentId: g.agentId, question: operationalGap(state, story, g) ? commission(g.agentId) : g.question }));
       const requests = wasSentBack ? gapRequests : resuming ? [...commissions, ...gapRequests] : commissions;
       const deferredAgents = new Set(story.gaps.filter(gap => gap.status === "open" && deferredGap(story, gap)).map(gap => gap.agentId));
       const uniqueRequests = [...new Map(requests.map(request => [`${request.agentId}|${request.question}`, request])).values()].sort((a, b) => Number(deferredAgents.has(b.agentId)) - Number(deferredAgents.has(a.agentId)));
@@ -590,7 +760,7 @@ export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | 
       // Drafting may itself identify missing evidence; those requests share the same bounded loop.
       await draftStory(state, story, researcher, deadline);
       await save();
-      const followups = [...new Map(story.gaps.filter(g => g.status === "open").map(gap => [`${gap.agentId}|${gap.question}`, gap])).values()].slice(0, 6);
+      const followups = [...new Map(story.gaps.filter(g => g.status === "open" && !activeScopeAssessment(state, story, g)).map(gap => [`${gap.agentId}|${gap.question}`, gap])).values()].slice(0, 6);
       if (followups.length && roundBudget > 1) {
         if (retrieve && input.mode === "live" && Date.now() < deadline) {
           const retrievalDeadline = Math.min(deadline, Date.now() + BUDGET.retrievalTimeoutMs);
