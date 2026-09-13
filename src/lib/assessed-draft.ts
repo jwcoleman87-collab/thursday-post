@@ -14,6 +14,7 @@ const field = (max: number) => z.object({
 export const AssessedDraftInput = z.object({
   expectedDraftHash: z.string().regex(/^[a-f0-9]{64}$/),
   expectedEvidenceFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  editorialTone: z.enum(['A', 'B', 'N']),
   headline: field(160).refine(value => value.text.length >= 5),
   paragraphs: z.array(field(4000).refine(value => /[.!?][”"’']?$/.test(value.text),
     'Every paragraph must end as a complete sentence, not a clipped excerpt.')).min(1).max(20),

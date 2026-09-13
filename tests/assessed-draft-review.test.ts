@@ -7,7 +7,7 @@ const angle='Contact stable staff for additional profile colour.';
 const source:SourceItem={id:'review-original-source',title:'Authority meeting statement',content:quote+'.',url:'https://records.example.org/original-statement',sourceName:'Review fixture authority',type:'official',independenceKey:'review-fixture',publishedAt:'2026-09-11T00:00:00Z',retrievedAt:'2026-09-11T01:00:00Z'};
 const provider:ResearchProvider={async research(){return {findings:[{text:quote,quote,sourceIds:[source.id],kind:'record_statement',confidence:'high'}]};},async draft({story}){return {headline:'Authority report',sentences:[{text:story.claims[0].text,claimIds:[story.claims[0].id]}],researchRequests:[{agentId:6,question:angle}]};}};
 async function fixture(){const state=createState();await runNewsroom(state,{mode:'live',items:[source],maxRounds:1},provider);return {state,story:state.stories[0]};}
-function input(state:NewsroomState,story:Story,sourceId=source.id){const {storyId:_id,...bindings}=assessedDraftContext(state,story.id);return {...bindings,headline:{text:'Authority confirms its meeting timetable',evidence:[{sourceId,quote}]},paragraphs:[{text:'According to the racing authority, the revised date of the meeting has been confirmed.',evidence:[{sourceId,quote}]}],note:'The assessor checked this headline and paragraph against the selected archived authority statement. No result, ownership or additional factual assertion was added.'};}
+function input(state:NewsroomState,story:Story,sourceId=source.id){const {storyId:_id,...bindings}=assessedDraftContext(state,story.id);return {...bindings,editorialTone:story.editorialTone??"N",headline:{text:'Authority confirms its meeting timetable',evidence:[{sourceId,quote}]},paragraphs:[{text:'According to the racing authority, the revised date of the meeting has been confirmed.',evidence:[{sourceId,quote}]}],note:'The assessor checked this headline and paragraph against the selected archived authority statement. No result, ownership or additional factual assertion was added.'};}
 
 test('invalidated reply is deleted from persisted story and cannot return after an identical second save',async()=>{
  const {state,story}=await fixture();story.editorialTone='B';
@@ -43,4 +43,22 @@ test('identical publisher wording links to the source actually selected, includi
  assert.ok(selected.every(id=>story.claims.find(c=>c.id===id)!.evidence.some(e=>e.sourceId===newest.id)));
  assert.ok(selected.every(id=>!previousIds.includes(id)));
  assert.equal(state.publications.length,0);
+});
+
+
+test('replacement prose requires an explicit tone and cannot carry an old reply into newly adverse reporting',async()=>{
+ const {state,story}=await fixture();
+ recordRightOfReply(state,story.id,{status:'not_required',note:'The original neutral meeting-date notice required no subject response.',sourceIds:[],expectedDraftHash:story.draft!.hash});
+ const good=input(state,story), {editorialTone:_tone,...missingTone}=good;
+ const before=structuredClone(state);
+ assert.throws(()=>recordAssessedDraft(state,story.id,missingTone,true));assert.deepEqual(state,before);
+ recordAssessedDraft(state,story.id,{...good,editorialTone:'B'},true);
+ assert.equal(story.editorialTone,'B');assert.equal(story.rightOfReply,undefined);
+ const gap=story.gaps.find(g=>g.question===angle)!;
+ recordScopeAssessment(state,story.id,gap.id,{...scopeAssessmentContext(state,story.id,gap.id),rationale:'The additional staff profile is unnecessary to support the archived authority statement.',claimIds:story.draft!.sentences.flatMap(s=>s.claimIds)},true);
+ assert.equal(story.compliance.find(c=>c.gate==='publication')!.status,'blocked');
+ assert.equal(story.status,'blocked');
+ const adverse=structuredClone(state);
+ assert.throws(()=>recordAssessedDraft(state,story.id,{...input(state,story),editorialTone:'N'},true),/cannot downgrade/);
+ assert.deepEqual(state,adverse);assert.equal(state.publications.length,0);
 });

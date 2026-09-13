@@ -324,6 +324,7 @@ export function recordAssessedDraft(state: NewsroomState, storyId: string, raw: 
   if (!original.draft || original.status === "sent_back") throw new Error("Complete James's send-back before replacing the draft through delegated review.");
   if (input.expectedEvidenceFingerprint !== evidenceFingerprint(state, original)) throw new Error("Evidence changed. Reload and review the current evidence before saving.");
   if (original.claims.some(claim => claim.status === "disputed" || claim.evidence.some(e => e.relation === "contradicts"))) throw new Error("Resolve contradictory evidence before recording a delegated draft review.");
+  if (original.editorialTone === "B" && input.editorialTone !== "B") throw new Error("Delegated review cannot downgrade an adverse story or waive its reply requirement.");
   const planned = structuredClone(state), story = planned.stories.find(item => item.id === storyId)!;
   const link = (field: AssessedDraftInput["headline"]): string[] => [...new Set(field.evidence.map(reference => {
     const source = sourceItems(planned, story).find(item => item.id === reference.sourceId);
@@ -351,10 +352,12 @@ export function recordAssessedDraft(state: NewsroomState, storyId: string, raw: 
     limitations: ["Editorial wording was checked by the newsroom assessor against the linked archived passages under delegated authority. This is not James's personal fact review or independent proof of underlying source assertions."],
     access: story.draft!.access ?? story.access ?? "members", ...(story.draft!.label ? { label: story.draft!.label } : {}) };
   if (!quotationBudgetMet(story, draft)) throw new Error("The article exceeds the existing per-source quotation allowance. Paraphrase or choose shorter complete quotations.");
+  const newlyAdverse = input.editorialTone === "B" && story.editorialTone !== "B";
+  story.editorialTone = input.editorialTone;
   story.wagering ||= isWagering(draft.headline + "\n" + draft.body);
   draft.assessorReview = { actor: "newsroom-assessor", authorisingOwner: "James", note: input.note,
     reviewedAt: now(), evidenceFingerprint: evidenceFingerprint(planned, story), headlineClaimIds };
-  replaceDraft(planned, story, draft, "A complete draft and delegated editorial review were saved by the newsroom assessor. Publication still awaits James's decision.");
+  replaceDraft(planned, story, draft, "A complete draft and delegated editorial review were saved by the newsroom assessor. Publication still awaits James's decision.", newlyAdverse);
   audit(planned, "editorial.assessed_draft_saved", `Newsroom assessor checked headline and ${sentences.length} paragraph(s) under James's delegation. No personal James review is asserted. Draft ${draft.hash}. ${input.note}`, story.id);
   // Copy deletions as well as values: a changed adverse article must lose its old reply.
   if (!story.rightOfReply) delete original.rightOfReply;

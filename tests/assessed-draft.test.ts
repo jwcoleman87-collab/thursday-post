@@ -23,7 +23,7 @@ async function fixture() {
 }
 function input(state:NewsroomState,story:Story) {
   const {storyId:_id,...bindings}=assessedDraftContext(state,story.id);
-  return {...bindings, headline:{text:'Authority confirms revised fixture date',evidence:[{sourceId:source.id,quote}]},
+  return {...bindings, editorialTone:story.editorialTone??"N", headline:{text:'Authority confirms revised fixture date',evidence:[{sourceId:source.id,quote}]},
     paragraphs:[{text:'According to the fixture authority, the revised meeting is scheduled for 18 September 2026.',evidence:[{sourceId:source.id,quote},{sourceId:source.id,quote:additional}]}],
     note:'The newsroom assessor checked the headline and full paragraph against the actual archived announcement, including the date and source attribution. No race result or ownership assertion was added.'};
 }

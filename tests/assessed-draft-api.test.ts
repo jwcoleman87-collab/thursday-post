@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { closeStore, readStore, transact, initialStore } from '../src/lib/store';
 import { closeDocuments } from '../src/lib/durable-store';
-import { createState, runNewsroom } from '../src/lib/engine';
+import { createState, runNewsroom, decideStory } from '../src/lib/engine';
 import { createBackup, parseBackup, restoreBackupToNewSqlite } from '../src/lib/backup';
 import { signSession } from '../src/lib/auth';
 import { publicPayload } from '../src/lib/service';
@@ -36,7 +36,7 @@ async function fixture(){
  const url=`/api/editorial?action=assessed_draft&storyId=${story.id}`;
  const response=await contextGET(request(url));assert.equal(response.status,200);
  const context=await response.json();assert.equal(context.enabled,false);
- const input={action:'assessed_draft',storyId:story.id,expectedDraftHash:context.expectedDraftHash,expectedEvidenceFingerprint:context.expectedEvidenceFingerprint,
+ const input={action:'assessed_draft',editorialTone:'N',storyId:story.id,expectedDraftHash:context.expectedDraftHash,expectedEvidenceFingerprint:context.expectedEvidenceFingerprint,
   headline:{text:'Authority confirms the meeting date',evidence:[{sourceId:source.id,quote}]},
   paragraphs:[{text:'According to the fixture authority, the September meeting date has been confirmed.',evidence:[{sourceId:source.id,quote}]}],
   note:'The assessor checked this fixture headline and paragraph against the complete archived statement, preserving attribution and adding no event outcome.'};
@@ -79,4 +79,25 @@ test('real API persistence saves attributed full prose, then scopes the optional
  const backup=await createBackup();assert.deepEqual(parseBackup(JSON.stringify(backup)).payload.store.state,state);
  assert.equal(restoreBackupToNewSqlite(backup,join(directory,'restored-assessed.sqlite')).verified,true);
  const publicData=JSON.stringify(await publicPayload({canReadPaid:true}));assert.ok(!publicData.includes(input.paragraphs[0].text));assert.ok(!publicData.includes(input.note));
+});
+
+
+test('published sources include headline-only evidence without exposing assessor notes or unpublished evidence',async()=>{
+ const {input,story}=await fixture();
+ const headlineQuote='The racing club announced the revised meeting programme';
+ const headlineSource={...source,id:'headline-only-archive',content:headlineQuote+'.',sourceName:'Headline fixture authority',url:'https://records.example.org/headline-archive'};
+ const unrelatedSource={...source,id:'unrelated-archive',content:'Unrelated source content.',url:'https://records.example.org/unrelated-archive'};
+ await transact(d=>{d.state.sourceItems.push(headlineSource,unrelatedSource);d.state.stories[0].sourceItems.push(headlineSource.id,unrelatedSource.id);});
+ const context=await(await contextGET(request(`/api/editorial?action=assessed_draft&storyId=${story.id}`))).json();
+ process.env.NEWSROOM_DELEGATED_DRAFT_REVIEW='true';process.env.NEWSROOM_DELEGATED_SCOPE_ASSESSMENT='true';
+ const submission={...input,expectedDraftHash:context.expectedDraftHash,expectedEvidenceFingerprint:context.expectedEvidenceFingerprint,headline:{text:'Club confirms revised programme',evidence:[{sourceId:headlineSource.id,quote:headlineQuote}]}};
+ assert.equal((await editorialPOST(request('/api/editorial',submission))).status,200);
+ const current=(await readStore()).state.stories[0],gap=current.gaps.find(g=>g.question===question)!;
+ const scopeContext=await(await contextGET(request(`/api/editorial?storyId=${story.id}&gapId=${gap.id}`))).json();
+ assert.equal((await editorialPOST(request('/api/editorial',{action:'scope_assessment',storyId:story.id,gapId:gap.id,expectedDraftHash:scopeContext.expectedDraftHash,expectedEvidenceFingerprint:scopeContext.expectedEvidenceFingerprint,rationale:'Only the club programme and authority date are reported; staff background supports no assertion.',claimIds:current.draft!.sentences.flatMap(s=>s.claimIds)}))).status,200);
+ await transact(d=>{decideStory(d.state,story.id,'approve','Synthetic test-only publication.',false);});
+ const paid=await publicPayload({canReadPaid:true});const urls=paid.articles[0].sources.map(s=>s.url);
+ assert.ok(urls.includes(headlineSource.url));assert.ok(urls.includes(source.url));assert.ok(!urls.includes(unrelatedSource.url));
+ assert.ok(!JSON.stringify(paid).includes(input.note));
+ const anonymous=await publicPayload();assert.deepEqual(anonymous.articles[0].sources,[]);
 });
