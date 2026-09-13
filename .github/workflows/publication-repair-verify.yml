@@ -1,0 +1,59 @@
+name: Verify agent-reviewed publication repair
+on:
+  push:
+    branches: [work/publication-draft-20260914]
+    paths: [.github/workflows/publication-repair-verify.yml]
+permissions:
+  contents: write
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: transfer
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: fa0a0403eadbd7c89eb7d4bd8ff8331122b12b75
+          path: source
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: source/package-lock.json
+      - name: Validate and apply exact patch
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, gzip, hashlib, subprocess
+          encoded=''.join(Path('transfer/.repair/'+name).read_text().strip() for name in ['part1.b64','part2.b64'])
+          patch=gzip.decompress(base64.b64decode(encoded,validate=True))
+          assert hashlib.sha256(patch).hexdigest()=='5bf138f87af45f88a0b3db4eb15c6d6b0fb63fbb621c46a256b6e0c48e634b74'
+          path=Path('/tmp/publication.patch');path.write_bytes(patch)
+          subprocess.run(['git','apply','--check',str(path)],cwd='source',check=True)
+          subprocess.run(['git','apply',str(path)],cwd='source',check=True)
+          expected={'.env.example':'1c4c1fa29b5717098b5737e1c9e6e1ed05172122','docs/AGENT_REVIEWED_DRAFT.md':'6aab1bf7660fee097ecb68e892fab0f450b8ea5a','src/app/api/editorial/route.ts':'bb739a03e38f87c806152955351f970830699643','src/components/editorial-desk.tsx':'5ee9c6c8a0f3bee9699aaba0f195a103ad027617','src/lib/assessed-draft.ts':'9b96280371b2f6d2d59e4423e68640e0f7faa544','src/lib/auth.ts':'16d11df50936c7076b4323f3e9456ee9f5da2334','src/lib/backup.ts':'deb007a156bb4ea9956bd2b683279dfaf568732d','src/lib/domain.ts':'0f0785e7c0baaf520f199bc7886fc6395b6f3150','src/lib/engine.ts':'eb753901658463ef0bf004cb9860e0e20a19c0d2','tests/assessed-draft-api.test.ts':'e1f2680322dc95b2fa801df3b84eb1c08c8523ce','tests/assessed-draft.test.ts':'7d42af61360e254022f4bc8b5aa02cb7887087d4'}
+          for filename,sha in expected.items():
+            assert subprocess.check_output(['git','hash-object',filename],cwd='source',text=True).strip()==sha, filename
+          print('Patch SHA256 and all 11 file blobs verified; production untouched.')
+          PY
+      - run: npm ci
+        working-directory: source
+      - run: npm run typecheck
+        working-directory: source
+      - run: npm test
+        working-directory: source
+      - run: npm run build
+        working-directory: source
+      - name: Preserve verified feature branch for review (not master)
+        working-directory: source
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .env.example docs/AGENT_REVIEWED_DRAFT.md src/app/api/editorial/route.ts src/components/editorial-desk.tsx src/lib/assessed-draft.ts src/lib/auth.ts src/lib/backup.ts src/lib/domain.ts src/lib/engine.ts tests/assessed-draft-api.test.ts tests/assessed-draft.test.ts
+          git diff --cached --check
+          git commit -m 'Save complete agent-reviewed drafts with source links and honest attribution'
+          git push origin HEAD:refs/heads/fix/agent-reviewed-draft
+          git rev-parse HEAD
