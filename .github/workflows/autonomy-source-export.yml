@@ -1,0 +1,36 @@
+name: Autonomous newsroom isolated source
+on:
+  push:
+    branches: [work/autonomous-newsroom-20260914]
+    paths: [.github/workflows/autonomy-source-export.yml]
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: bc3415059e66125ddc9b59a9ef9f59eabc445ff0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Export only tracked source and test runtime, never credentials or data
+        run: |
+          mkdir -p /tmp/autonomy-export/runtime
+          git archive --format=tar HEAD > /tmp/autonomy-export/source.tar
+          cp "$(command -v node)" /tmp/autonomy-export/runtime/node
+          tar -czf /tmp/autonomy-export/dependencies.tar.gz node_modules
+          git rev-parse HEAD > /tmp/autonomy-export/BASE_SHA.txt
+          cd /tmp/autonomy-export
+          sha256sum source.tar dependencies.tar.gz runtime/node > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: autonomy-source-bc341505
+          path: /tmp/autonomy-export/
+          retention-days: 1
+          compression-level: 0
