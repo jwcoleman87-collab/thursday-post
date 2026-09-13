@@ -331,7 +331,7 @@ export function recordAssessedDraft(state: NewsroomState, storyId: string, raw: 
       source.demo || source.url.includes("example.invalid") || !source.content.includes(reference.quote))
       throw new Error("Every cited passage must match a public archived source on this story exactly. Private, missing and invented evidence is refused.");
     const text = `${source.sourceName} states: “${reference.quote}”`;
-    const id = stableId("claim", `${story.id}|record_statement|${text}`);
+    const id = stableId("claim", `${story.id}|record_statement|${source.id}|${text}`);
     const existing = story.claims.find(item => item.id === id);
     if (existing && !verifiedClaim(planned, story, id)) throw new Error("A disputed or unverified claim cannot be upgraded by a draft save.");
     if (!existing) {
@@ -356,6 +356,8 @@ export function recordAssessedDraft(state: NewsroomState, storyId: string, raw: 
     reviewedAt: now(), evidenceFingerprint: evidenceFingerprint(planned, story), headlineClaimIds };
   replaceDraft(planned, story, draft, "A complete draft and delegated editorial review were saved by the newsroom assessor. Publication still awaits James's decision.");
   audit(planned, "editorial.assessed_draft_saved", `Newsroom assessor checked headline and ${sentences.length} paragraph(s) under James's delegation. No personal James review is asserted. Draft ${draft.hash}. ${input.note}`, story.id);
+  // Copy deletions as well as values: a changed adverse article must lose its old reply.
+  if (!story.rightOfReply) delete original.rightOfReply;
   Object.assign(original, story);
   state.audit.push(...planned.audit.slice(state.audit.length));
   return original.draft!;
