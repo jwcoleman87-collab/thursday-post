@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { BUDGET, decideStory, runNewsroom } from './engine';
+import { BUDGET, decideStory, runNewsroom, projectScopeAssessments } from './engine';
 import { DEMO_ITEMS } from './fixtures';
 import { collectSourceItems, createTargetedRetriever, type RegisteredSource, validateSourceUrl } from './ingestion';
 import { createLiveProvider, liveProviderConfigured, GatewayAccessError } from './providers';
@@ -40,7 +40,7 @@ export function readiness(data:StoreData) {
 }
 export async function newsroomPayload() {
   const data=await readStore();
-  const state=structuredClone(data.state);
+  const state=projectScopeAssessments(data.state);
   // Inbox entries are visible immediately, including while an autonomous run holds its lease.
   for(const item of data.inbox)if(!state.sourceItems.some(source=>source.id===item.id))state.sourceItems.push(item);
   // Originals remain durable and individually downloadable; never copy attachment-sized payloads into every dashboard response.

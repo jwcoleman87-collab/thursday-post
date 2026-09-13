@@ -39,6 +39,16 @@ export function requireOwner(request:Request) {
   const cookie=request.headers.get('cookie')?.split(';').map(x=>x.trim()).find(x=>x.startsWith('newsroom_session='))?.slice(17);
   if(!cookie || !validSession(cookie))throw new HttpError('Sign in to James’s newsroom.',401);
 }
+/**
+ * Delegated authority is a server-side setting, never a claim in a request body. A caller
+ * cannot name an actor to obtain it. This is an operator feature switch, not a separate
+ * authenticated agent identity: the route still requires the owner's existing session.
+ * Human fact-review and publication approval remain separate, unchanged actions.
+ */
+export function delegatedScopeAssessmentEnabled() {
+  return process.env.NEWSROOM_DELEGATED_SCOPE_ASSESSMENT === 'true';
+}
+
 export function requireSameOrigin(request:Request) {
   const origin=request.headers.get('origin');
   // Next's internal URL can use localhost while the browser correctly addresses 127.0.0.1.

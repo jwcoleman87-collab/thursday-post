@@ -1223,10 +1223,23 @@ function EvidenceHub({
                       <strong>{gap.question}</strong>
                       <p>
                         Assigned to Research Agent {gap.agentId}
-                        {gap.blocking ? " · Blocking editorial use" : ""}
+                        {gap.scopeAssessment
+                          ? " · Assessed out of scope for this draft"
+                          : gap.blocking
+                            ? " · Blocking editorial use"
+                            : ""}
                       </p>
                       {gap.resolution ? (
                         <p className="gap-resolution">{gap.resolution}</p>
+                      ) : null}
+                      {gap.scopeAssessment ? (
+                        <p className="gap-resolution">
+                          Newsroom assessor: additional reporting angle not
+                          required for this draft&rsquo;s scope. Not a
+                          verification of missing evidence and not a human claim
+                          review; James remains the authorising owner.{" "}
+                          {gap.scopeAssessment.rationale}
+                        </p>
                       ) : null}
                     </div>
                   </div>
@@ -2118,12 +2131,23 @@ function StoryReview({
                       <strong>{gap.question}</strong>
                       <p>
                         Research Agent {gap.agentId} ·{" "}
-                        {gap.blocking
-                          ? "Required before drafting"
-                          : "Qualified limitation"}
+                        {gap.scopeAssessment
+                          ? "Assessed out of scope for this draft"
+                          : gap.blocking
+                            ? "Required before drafting"
+                            : "Qualified limitation"}
                       </p>
                       {gap.resolution ? (
                         <p className="gap-resolution">{gap.resolution}</p>
+                      ) : null}
+                      {gap.scopeAssessment ? (
+                        <p className="gap-resolution">
+                          Newsroom assessor: additional reporting angle not
+                          required for this draft&rsquo;s scope. Not a
+                          verification of missing evidence and not a human claim
+                          review; James remains the authorising owner.{" "}
+                          {gap.scopeAssessment.rationale}
+                        </p>
                       ) : null}
                     </div>
                   </div>

@@ -104,6 +104,24 @@ export interface ResearchFinding {
   createdAt: string;
 }
 
+/**
+ * A delegated assessment that an additional reporting angle is not required for the scope of
+ * the draft as written. It is explicitly NOT a finding that missing evidence was verified, and
+ * NOT a human review of the claims: the automated assessor and the authorising owner are
+ * recorded separately. It is bound to the exact draft and evidence it was made against, so any
+ * change to the reporting forces a fresh assessment.
+ */
+export interface ScopeAssessment {
+  outcome: "not_required_for_scope";
+  rationale: string;
+  assessor: "newsroom-assessor";
+  authorisingOwner: "James";
+  claimIds: string[];
+  draftHash: string;
+  evidenceFingerprint: string;
+  assessedAt: string;
+}
+
 export interface EvidenceGap {
   id: string;
   question: string;
@@ -111,6 +129,7 @@ export interface EvidenceGap {
   status: "open" | "resolved";
   blocking: boolean;
   resolution?: string;
+  scopeAssessment?: ScopeAssessment;
   claimIds: string[];
   createdAt: string;
 }
