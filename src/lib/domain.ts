@@ -147,6 +147,8 @@ export interface ArticleDraft {
   limitations: string[];
   /** Human review is an editorial attestation, never automatic proof of a source's assertion. */
   factReview?: { actor: "James"; note: string; reviewedAt: string };
+  /** Delegated editorial judgement, never a personal fact attestation by James. */
+  assessorReview?: { actor: "newsroom-assessor"; authorisingOwner: "James"; note: string; reviewedAt: string; evidenceFingerprint: string; headlineClaimIds: string[] };
   reviewRevision?: number;
   label?: "opinion" | "analysis" | "update" | "correction" | "right_of_reply";
   deck?: string;

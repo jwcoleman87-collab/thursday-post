@@ -45,6 +45,10 @@ export function requireOwner(request:Request) {
  * authenticated agent identity: the route still requires the owner's existing session.
  * Human fact-review and publication approval remain separate, unchanged actions.
  */
+export function delegatedDraftReviewEnabled() {
+  return process.env.NEWSROOM_DELEGATED_DRAFT_REVIEW === 'true';
+}
+
 export function delegatedScopeAssessmentEnabled() {
   return process.env.NEWSROOM_DELEGATED_SCOPE_ASSESSMENT === 'true';
 }
