@@ -301,3 +301,33 @@ test("reassessment archives the complete previous decision before replacing stal
     assert.equal(state.publications.length, 0);
   }
 });
+
+
+test("active scope decisions do not consume initial or targeted research slots on an unrelated send-back", async () => {
+  for (const maxRounds of [1, 2]) {
+    const { state, story, gap } = await blockedOnAngle();
+    recordScopeAssessment(state, story.id, gap.id, { ...scopeAssessmentContext(state, story.id, gap.id), rationale, claimIds: linkedClaims(story) }, true);
+    decideStory(state, story.id, "send_back", "Check the meeting date against the supplied official record.", false);
+    // The assessor has inspected the changed question set; the optional angle remains optional.
+    recordScopeAssessment(state, story.id, gap.id, { ...scopeAssessmentContext(state, story.id, gap.id), rationale, claimIds: linkedClaims(story) }, true);
+    const calls: string[] = [];
+    const researcher = provider();
+    await runNewsroom(state, { mode: "live", items: [], ...CAPS, maxRounds, maxResearchTasks: 1 }, { ...researcher, async research(request) { calls.push(request.question); return researcher.research(request); } });
+    assert.ok(calls.length > 0);
+    assert.ok(calls.every(question => question.startsWith("James requests:")), "neither research queue may spend capacity on the active optional-angle assessment");
+    assert.equal(gap.status, "open", "scoping still does not pretend to answer the question");
+    assert.equal(state.publications.length, 0);
+  }
+});
+
+test("a stale scope decision does not suppress the original question from research", async () => {
+  const { state, story, gap } = await blockedOnAngle();
+  recordScopeAssessment(state, story.id, gap.id, { ...scopeAssessmentContext(state, story.id, gap.id), rationale, claimIds: linkedClaims(story) }, true);
+  decideStory(state, story.id, "send_back", "Review this changed source context before publication.", false);
+  // The owner request changes the evidence/question fingerprint; do not renew the assessment.
+  const calls: string[] = [];
+  const researcher = provider();
+  await runNewsroom(state, { mode: "live", items: [], ...CAPS, maxResearchTasks: 1 }, { ...researcher, async research(request) { calls.push(request.question); return researcher.research(request); } });
+  assert.ok(calls.includes(ANGLE), "stale decisions must not suppress necessary re-research");
+  assert.equal(state.publications.length, 0);
+});

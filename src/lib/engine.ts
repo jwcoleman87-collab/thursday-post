@@ -736,7 +736,7 @@ export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | 
       // commissions on recovery as well as open gaps; the task filter below removes
       // work already completed against this source/review version.
       const commissions = story.researchAgentIds.map(agentId => ({ agentId, question: commission(agentId) }));
-      const gapRequests = story.gaps.filter(g => g.status === "open" && g.blocking).map(g => ({ agentId: g.agentId, question: operationalGap(state, story, g) ? commission(g.agentId) : g.question }));
+      const gapRequests = story.gaps.filter(g => g.status === "open" && g.blocking && !activeScopeAssessment(state, story, g)).map(g => ({ agentId: g.agentId, question: operationalGap(state, story, g) ? commission(g.agentId) : g.question }));
       const requests = wasSentBack ? gapRequests : resuming ? [...commissions, ...gapRequests] : commissions;
       const deferredAgents = new Set(story.gaps.filter(gap => gap.status === "open" && deferredGap(story, gap)).map(gap => gap.agentId));
       const uniqueRequests = [...new Map(requests.map(request => [`${request.agentId}|${request.question}`, request])).values()].sort((a, b) => Number(deferredAgents.has(b.agentId)) - Number(deferredAgents.has(a.agentId)));
@@ -760,7 +760,7 @@ export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | 
       // Drafting may itself identify missing evidence; those requests share the same bounded loop.
       await draftStory(state, story, researcher, deadline);
       await save();
-      const followups = [...new Map(story.gaps.filter(g => g.status === "open").map(gap => [`${gap.agentId}|${gap.question}`, gap])).values()].slice(0, 6);
+      const followups = [...new Map(story.gaps.filter(g => g.status === "open" && !activeScopeAssessment(state, story, g)).map(gap => [`${gap.agentId}|${gap.question}`, gap])).values()].slice(0, 6);
       if (followups.length && roundBudget > 1) {
         if (retrieve && input.mode === "live" && Date.now() < deadline) {
           const retrievalDeadline = Math.min(deadline, Date.now() + BUDGET.retrievalTimeoutMs);
