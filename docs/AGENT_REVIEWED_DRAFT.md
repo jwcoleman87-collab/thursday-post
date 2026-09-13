@@ -4,7 +4,7 @@ This operator workflow does not grant the in-app model tools, publication author
 
 Enable `NEWSROOM_DELEGATED_DRAFT_REVIEW=true` in the existing Production environment and redeploy the reviewed revision. This is separate from the narrower scope-assessment flag.
 
-In the owner-authenticated browser, GET `/api/editorial?action=assessed_draft&storyId=<id>` for current draft/evidence bindings and the effective feature setting. POST `/api/editorial` with `action: "assessed_draft"`, `storyId`, those two bindings, `headline: {text, evidence: [{sourceId, quote}]}`, `paragraphs: [{text, evidence: [{sourceId, quote}]}]`, and a specific `note` explaining source, attribution, quote and date checks. Exact passages must exist in a public archived source on this story, at most 25 words each. Existing direct-quotation allowance applies to article text, not paragraph length; write original prose, not 25-word fragments.
+In the owner-authenticated browser, GET `/api/editorial?action=assessed_draft&storyId=<id>` for current draft/evidence bindings and the effective feature setting. POST `/api/editorial` with `action: "assessed_draft"`, `storyId`, those two bindings, required `editorialTone` (`A`, `B` or `N`), `headline: {text, evidence: [{sourceId, quote}]}`, `paragraphs: [{text, evidence: [{sourceId, quote}]}]`, and a specific `note` explaining source, attribution, quote, tone and date checks. Exact passages must exist in a public archived source on this story, at most 25 words each. Existing direct-quotation allowance applies to article text, not paragraph length; write original prose, not 25-word fragments.
 
 No actor, verdict, humanReviewed, authority, access or status fields are accepted. The server records the newsroom assessor separately from James as authorising owner. Old personal reviews and drafts are retained intact; the new version is not a relabelled human review. Complete all required reporting; this endpoint does not clear evidence gaps.
 
@@ -19,3 +19,9 @@ Identical passages on different archive URLs remain distinct evidence: generated
 Changing an adverse article invalidates and removes its previous right-of-reply outcome from current state while preserving the audit. Saving the replacement a second time cannot reinstate the old outcome. Any required fresh reply decision still blocks publication.
 
 Both cases were reproduced against the first implementation and corrected in `86c108c43088c089add865c52fb5db095b987a19`. Full tests, typecheck and build passed in verification run `34787215531`. These are synthetic regression results, not a claim that the live article has been saved or published.
+
+## Replacement tone and headline sources
+
+The assessor must explicitly classify the new article: A is constructive, B is adverse, N is neutral. A new B classification invalidates any earlier completed reply outcome, even where wording is otherwise unchanged. A delegated save cannot downgrade an already adverse story to avoid its reply requirement. This is an assessor judgement, not automatic sentiment detection.
+
+Reader source links include evidence used by the headline as well as the paragraphs, while unrelated archive items and private reviewer notes remain excluded. Anonymous readers still receive no subscriber-only source material. Regression coverage exercises the persisted editorial API, optional-angle assessment and synthetic publication source projection. Verification run `34787818908` passed the full suite, typecheck and production build before these changes were pushed. No real article was published during that verification.
