@@ -1,12 +1,10 @@
 import { createHash } from 'node:crypto';
 import type { NewsroomState, Story, ResearchProvider, TargetedRetriever, PeAgentId } from './domain';
-import { AutonomousArticleSchema, AutonomousReviewSchema, nextIssueDate, type AutonomousContext, type AutonomousProgress, type AutonomousProvider } from './autonomous-contract';
-import { BUDGET, sourceItems, evidenceFingerprint, operationalGap, agentFollowupGap, resolveTask, addSource, audit, transition, draftStory, recordAssessedDraft, assessedDraftContext, recordScopeAssessment, scopeAssessmentContext, addGap, verifiedClaim } from './engine';
+import { AutonomousArticleSchema, AutonomousReviewSchema, nextIssueDate, type AutonomousContext, type AutonomousProgress, type AutonomousProvider, type AutonomousArticle } from './autonomous-contract';
+import { BUDGET, sourceItems, evidenceFingerprint, operationalGap, agentFollowupGap, resolveTask, addSource, audit, transition, draftStory, recordAssessedDraft, assessedDraftContext, recordScopeAssessment, scopeAssessmentContext, addGap, verifiedClaim, activeScopeAssessment, assessedDraftIntact } from './engine';
 
 const now=()=>new Date().toISOString();
 const hash=(input:unknown)=>createHash('sha256').update(JSON.stringify(input)).digest('hex');
-const commission=(story:Story,agentId:number)=>story.researchAgentIds.includes(agentId as never);
-const ownGap=(gap:Story['gaps'][number])=>gap.question.startsWith('James requests:');
 
 /** This predicate is scheduling, not permission to clear an evidence question. */
 export function autonomousRetryable(state:NewsroomState,story:Story):boolean {
@@ -28,7 +26,7 @@ function progress(state:NewsroomState,story:Story):AutonomousProgress {
 /** Targeted retrieval runs on later invocations too, not only a second in-memory round. */
 export async function prepareAutonomousResearch(state:NewsroomState,story:Story,retrieve:TargetedRetriever|undefined,deadline:number,save:()=>Promise<void>):Promise<void>{
   const p=progress(state,story);
-  const gaps=story.gaps.filter(g=>g.status==='open'&&g.blocking&&!g.scopeAssessment&&!operationalGap(state,story,g));
+  const gaps=story.gaps.filter(g=>g.status==='open'&&g.blocking&&!activeScopeAssessment(state,story,g)&&!operationalGap(state,story,g));
   if(!retrieve||!gaps.length||p.retrievalBasis===p.basis||Date.now()+1000>=deadline)return;
   const previous=p.basis;
   const result=await retrieve({story:structuredClone(story),questions:gaps.slice(0,6).map(g=>g.question),sourceItems:structuredClone(sourceItems(state,story)),maxItems:BUDGET.maxAdditionalSources,deadline:Math.min(deadline,Date.now()+BUDGET.retrievalTimeoutMs)});
@@ -47,11 +45,21 @@ function context(state:NewsroomState,story:Story,p:AutonomousProgress):Autonomou
   const sources=sourceItems(state,story).filter(s=>!s.demo&&s.type!=='email'&&s.type!=='social')
     .slice(-3).map(s=>({id:s.id,sourceName:s.sourceName,url:s.url,type:s.type,publishedAt:s.publishedAt,publishedAtKnown:s.publishedAtKnown,retrievedAt:s.retrievedAt,content:s.content.slice(0,4000)}));
   return {storyId:story.id,title:story.title.slice(0,300),issueDate:p.issueDate,asOf:now(),writerId:story.peAgentId,reviewerId:p.reviewerId as PeAgentId,sources,
-    gaps:story.gaps.filter(g=>g.status==='open'&&g.blocking).slice(0,12).map(g=>({id:g.id,question:g.question,agentId:g.agentId,scopeEligible:agentFollowupGap(story,g)&&!operationalGap(state,story,g)})),feedback:p.feedback.slice(0,6)};
+    gaps:story.gaps.filter(g=>g.status==='open'&&g.blocking&&!activeScopeAssessment(state,story,g)).slice(0,12).map(g=>({id:g.id,question:g.question,agentId:g.agentId,scopeEligible:agentFollowupGap(story,g)&&!operationalGap(state,story,g)})),feedback:p.feedback.slice(0,6)};
 }
 
 function referencesValid(input:AutonomousContext,references:{sourceId:string;quote:string}[]):boolean{
   return references.every(r=>r.quote.trim().split(/\s+/).length<=25&&input.sources.some(s=>s.id===r.sourceId&&s.content.includes(r.quote)));
+}
+
+/** A second gap-review batch must not regenerate the draft and invalidate the first batch. */
+function sameAcceptedArticle(state:NewsroomState,story:Story,article:AutonomousArticle):boolean {
+  const draft=story.draft;
+  if(!draft||!assessedDraftIntact(state,story)||draft.headline!==article.headline.text||draft.sentences.length!==article.paragraphs.length||story.editorialTone!==article.editorialTone)return false;
+  const referenceKey=(refs:{sourceId:string;quote:string}[])=>JSON.stringify([...new Set(refs.map(r=>JSON.stringify([r.sourceId,r.quote])))].sort());
+  const storedReferences=(ids:string[])=>ids.flatMap(id=>(verifiedClaim(state,story,id)?.evidence??[]).filter(e=>e.exactMatch&&e.relation==='supports').map(e=>({sourceId:e.sourceId,quote:e.quote})));
+  if(referenceKey(storedReferences(draft.assessorReview!.headlineClaimIds))!==referenceKey(article.headline.evidence))return false;
+  return article.paragraphs.every((field,index)=>draft.sentences[index].text===field.text&&referenceKey(storedReferences(draft.sentences[index].claimIds))===referenceKey(field.evidence));
 }
 
 async function timed<T>(work:()=>Promise<T>,deadline:number):Promise<T>{
@@ -118,7 +126,7 @@ export async function finishAutonomousStory(state:NewsroomState,story:Story,prov
     for(const field of review.fields)if(!field.supported||!field.complete)reasons.push(`Field ${field.index}: ${field.reason}`);
     if(!review.datesAppropriate)reasons.push('The proposed reporting is not accurate for this issue date. Obtain current evidence or correct the tense.');
     if(review.editorialTone!==article.editorialTone)reasons.push('Writer and checker disagree on adverse-reporting classification.');
-    if(review.gaps.length!==new Set(review.gaps.map(g=>g.gapId)).size||review.gaps.some(g=>!input.gaps.some(x=>x.id===g.gapId)||!referencesValid(input,g.evidence)))reasons.push('Checker returned duplicate, unknown or unsupported gap decisions.');
+    if(review.gaps.length!==input.gaps.length||input.gaps.some(g=>!review.gaps.some(r=>r.gapId===g.id))||review.gaps.length!==new Set(review.gaps.map(g=>g.gapId)).size||review.gaps.some(g=>!input.gaps.some(x=>x.id===g.gapId)||!referencesValid(input,g.evidence)))reasons.push('Checker must assess every supplied gap exactly once, using only supported references.');
     if(reasons.length){reject(state,story,p,reasons);await save();return;}
     if(review.research.length){
       for(const request of review.research)addGap(state,story,request.question,request.agentId as never,true,`editorial-${request.question}`);
@@ -135,8 +143,10 @@ export async function finishAutonomousStory(state:NewsroomState,story:Story,prov
       gap.status='resolved';gap.claimIds=claimIds;gap.resolution=`Research findings checked by PE Agent ${p.reviewerId}: ${decision.rationale}`;
       audit(planned,'autonomy.question_answered',JSON.stringify({gapId:gap.id,claimIds,reviewerId:p.reviewerId,sourceScope:'source_statement',rationale:decision.rationale}),story.id);
     }
-    const bindings=assessedDraftContext(planned,story.id);
-    recordAssessedDraft(planned,story.id,{expectedDraftHash:bindings.expectedDraftHash,expectedEvidenceFingerprint:bindings.expectedEvidenceFingerprint,...article,note:`Autonomous PE writer ${story.peAgentId}, independent checking PE ${p.reviewerId}; issue ${p.issueDate}. ${review.summary}`},true);
+    if(!sameAcceptedArticle(planned,candidate,article)){
+      const bindings=assessedDraftContext(planned,story.id);
+      recordAssessedDraft(planned,story.id,{expectedDraftHash:bindings.expectedDraftHash,expectedEvidenceFingerprint:bindings.expectedEvidenceFingerprint,...article,note:`Autonomous PE writer ${story.peAgentId}, independent checking PE ${p.reviewerId}; issue ${p.issueDate}. ${review.summary}`},true);
+    }
     for(const decision of review.gaps.filter(g=>g.outcome==='optional')){
       const gap=candidate.gaps.find(g=>g.id===decision.gapId)!;
       if(!gap||gap.status!=='open'||!agentFollowupGap(candidate,gap))continue;
@@ -147,7 +157,10 @@ export async function finishAutonomousStory(state:NewsroomState,story:Story,prov
       recordScopeAssessment(planned,story.id,gap.id,{rationale:`Independent PE Agent ${p.reviewerId}: ${decision.rationale}`,claimIds:[...new Set(claimIds)],expectedDraftHash:bindings.expectedDraftHash,expectedEvidenceFingerprint:bindings.expectedEvidenceFingerprint},true);
     }
     const accepted=planned.stories.find(s=>s.id===story.id)!;
-    accepted.autonomy={...p,proposal:article,review,phase:accepted.status==='waiting_approval'?'ready':'held',basis:evidenceFingerprint(planned,accepted),draftBasis:accepted.draft!.hash,updatedAt:now()};
+    const remaining=accepted.gaps.filter(g=>g.status==='open'&&g.blocking&&!activeScopeAssessment(planned,accepted,g));
+    const batchCompleted=input.gaps.every(g=>!remaining.some(r=>r.id===g.id));
+    const nextPhase=accepted.status==='waiting_approval'?'ready':remaining.length&&batchCompleted?'review':'held';
+    accepted.autonomy={...p,proposal:article,review,phase:nextPhase,basis:evidenceFingerprint(planned,accepted),draftBasis:accepted.draft!.hash,updatedAt:now()};
     audit(planned,'autonomy.editorial_checked',JSON.stringify({writerId:story.peAgentId,reviewerId:p.reviewerId,issueDate:p.issueDate,draftHash:accepted.draft!.hash,status:accepted.status,blockingQuestions:accepted.gaps.filter(g=>g.status==='open'&&g.blocking&&!g.scopeAssessment).map(g=>g.id)}),story.id);
     for(const key of Object.keys(story))if(!(key in accepted))delete (story as unknown as Record<string,unknown>)[key];
     Object.assign(story,accepted);state.audit=planned.audit;await save();

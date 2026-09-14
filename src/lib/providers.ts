@@ -203,6 +203,9 @@ class GatewayProvider implements ResearchProvider {
       if(this.dispatches >= (this.control.maxRequests??Infinity))throw new GatewayCapacityError();
       await this.acquire();
       try {
+        // Queued callers must recheck admission AFTER acquiring the shared permit.
+        if(this.dispatches >= (this.control.maxRequests??Infinity))throw new GatewayCapacityError();
+        if(Date.now()<this.rateLimitedUntil)throw new GatewayAccessError(429,"gateway_rate_limited");
         this.dispatches++;
         await this.control.onNotBefore?.(Date.now()+(this.transport===fetch?GATEWAY_PACING.minIntervalMs:0));
         response = await this.transport("https://ai-gateway.vercel.sh/v1/chat/completions", {

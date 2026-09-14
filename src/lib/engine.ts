@@ -294,7 +294,7 @@ export function evidenceFingerprint(state: NewsroomState, story: Story): string 
 }
 
 /** A delegated review is version-bound editorial judgement, not automatic fact proof. */
-function assessedDraftIntact(state: NewsroomState, story: Story): boolean {
+export function assessedDraftIntact(state: NewsroomState, story: Story): boolean {
   const draft = story.draft, review = draft?.assessorReview;
   if (!draft || !review || draft.factReview || draft.deck || draft.dateline || draft.captions?.length) return false;
   if (review.actor !== "newsroom-assessor" || review.authorisingOwner !== "James" || review.note.trim().length < 20) return false;
@@ -376,7 +376,7 @@ export function agentFollowupGap(story: Story, gap: EvidenceGap): boolean {
 }
 
 /** An assessment counts only while the draft and evidence it was made against are unchanged. */
-function activeScopeAssessment(state: NewsroomState, story: Story, gap: EvidenceGap): boolean {
+export function activeScopeAssessment(state: NewsroomState, story: Story, gap: EvidenceGap): boolean {
   const assessment = gap.scopeAssessment;
   return !!assessment && !!story.draft && gap.status === "open" && gap.blocking
     && assessment.outcome === "not_required_for_scope" && assessment.assessor === "newsroom-assessor"

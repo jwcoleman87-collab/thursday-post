@@ -61,3 +61,11 @@ test('the scheduled startRun path completes research-to-PE handoff, persists the
   await closeStore();await closeDocuments();for(const key of Object.keys(process.env))if(!(key in saved))delete process.env[key];Object.assign(process.env,saved);rmSync(folder,{recursive:true,force:true});
  }
 });
+
+
+test('queued parallel callers cannot overrun the shared autonomous dispatch allowance',async()=>{
+ let requests=0;
+ const provider=createLiveProvider({apiKey:'synthetic-unit-test',model:'openai/unit-test',maxRequests:2,transport:async()=>{requests++;await new Promise(r=>setTimeout(r,1));return response(article);}});
+ const outcomes=await Promise.allSettled(Array.from({length:6},()=>provider.composeArticle!(context)));
+ assert.equal(requests,2);assert.equal(outcomes.filter(r=>r.status==='fulfilled').length,2);
+});

@@ -71,3 +71,28 @@ test('edition date is calculated in Sydney and given to both editorial agents',(
  assert.equal(nextIssueDate(new Date('2026-09-13T23:00:00Z')),'2026-09-17');
  assert.equal(nextIssueDate(new Date('2026-09-17T15:00:00Z')),'2026-09-24');
 });
+
+
+test('more optional questions than fit one checking pass drain across persisted PE reviews',async()=>{
+ const state=createState(),log={research:[] as number[],writers:[] as number[],reviewers:[] as number[]};
+ await runNewsroom(state,{...caps,items:items()},worker(log,20));
+ for(let i=0;i<14;i++){const q=`Additional founder profile angle ${i}?`;addGap(state,state.stories[0],q,2,true,`editorial-${q}`);}
+ for(let pass=0;pass<20&&state.stories[0].status!=='waiting_approval';pass++)await runNewsroom(state,{...caps,items:[]},worker(log,20));
+ assert.equal(state.stories[0].status,'waiting_approval',JSON.stringify(state.stories[0].autonomy));
+ assert.equal(state.stories[0].gaps.filter(g=>g.scopeAssessment).length,14);
+ assert.equal(log.writers.length,1);assert.equal(log.reviewers.length,2);assert.equal(state.publications.length,0);
+});
+
+
+test('a checker that omits an assigned gap is retried without accepting a draft or silently stranding the question',async()=>{
+ const state=createState(),log={research:[] as number[],writers:[] as number[],reviewers:[] as number[]};
+ await runNewsroom(state,{...caps,items:items()},worker(log,20));
+ const q='Could this also profile stable staff?';addGap(state,state.stories[0],q,2,true,`editorial-${q}`);
+ let checks=0;
+ for(let pass=0;pass<10&&state.stories[0].status!=='waiting_approval';pass++){
+   await runNewsroom(state,{...caps,items:[]},worker(log,20,r=>{if(checks++===0)r.gaps=[];}));
+   if(checks===1){assert.equal(state.stories[0].autonomy?.phase,'compose');assert.equal(state.stories[0].draft?.assessorReview,undefined);}
+ }
+ assert.equal(checks,2);assert.equal(state.stories[0].status,'waiting_approval');assert.equal(state.publications.length,0);
+ assert.ok(state.audit.some(a=>a.action==='autonomy.revision_required'&&a.detail.includes('every supplied gap')));
+});
