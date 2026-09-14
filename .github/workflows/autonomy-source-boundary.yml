@@ -1,0 +1,44 @@
+name: Verify autonomous editorial source boundary
+on:
+  push:
+    branches: [work/autonomous-newsroom-20260914]
+    paths: [.github/workflows/autonomy-source-boundary.yml]
+permissions:
+  contents: write
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 87eca513c7d60d0ef5464a80807882841a2c4f14
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Keep unverified social and media records out of the factual writing corpus
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('src/lib/autonomous.ts');s=p.read_text()
+          old=".filter(s=>!s.demo&&s.type!=='email'&&s.type!=='social')"
+          new=".filter(s=>!s.demo&&['official','data','publication'].includes(s.type)&&s.url.startsWith('https://')&&!s.url.includes('example.invalid'))"
+          assert s.count(old)==1;s=s.replace(old,new);p.write_text(s)
+          p=Path('tests/autonomous.test.ts');s=p.read_text()
+          old='async composeArticle(input){spend();log.writers.push(input.writerId);return article();}'
+          new="async composeArticle(input){spend();assert.ok(input.sources.every(source=>['official','data','publication'].includes(source.type)));log.writers.push(input.writerId);return article();}"
+          assert s.count(old)==1;s=s.replace(old,new);p.write_text(s)
+          PY
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Preserve verified source boundary on feature branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/lib/autonomous.ts tests/autonomous.test.ts
+          git diff --cached --check
+          git commit -m 'Supply editorial agents only admissible archived public-source text'
+          git push origin HEAD:refs/heads/feat/autonomous-newsroom
