@@ -22,7 +22,7 @@ function worker(log:{research:number[];writers:number[];reviewers:number[]},limi
  const spend=()=>{if(used++>=limit){const e=new Error('Bounded request allowance');e.name='GatewayCapacityError';throw e;}};
  return {
   async research(request){spend();log.research.push(request.agentId);return {findings:[{text:passage,kind:'record_statement',quote:passage,sourceIds:['official'],contradictorySourceIds:[],questions:[],confidence:'high'}]};},
-  async composeArticle(input){spend();log.writers.push(input.writerId);return article();},
+  async composeArticle(input){spend();assert.ok(input.sources.every(source=>['official','data','publication'].includes(source.type)));log.writers.push(input.writerId);return article();},
   async reviewArticle(input){spend();log.reviewers.push(input.reviewerId);const result=review(input);change?.(result);return result;},
  };
 }

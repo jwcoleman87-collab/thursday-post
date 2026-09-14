@@ -42,7 +42,7 @@ export async function prepareAutonomousResearch(state:NewsroomState,story:Story,
 
 function context(state:NewsroomState,story:Story,p:AutonomousProgress):AutonomousContext{
   // The writer and checker see the same bounded archived material. No URLs are fetched by the model.
-  const sources=sourceItems(state,story).filter(s=>!s.demo&&s.type!=='email'&&s.type!=='social')
+  const sources=sourceItems(state,story).filter(s=>!s.demo&&['official','data','publication'].includes(s.type)&&s.url.startsWith('https://')&&!s.url.includes('example.invalid'))
     .slice(-3).map(s=>({id:s.id,sourceName:s.sourceName,url:s.url,type:s.type,publishedAt:s.publishedAt,publishedAtKnown:s.publishedAtKnown,retrievedAt:s.retrievedAt,content:s.content.slice(0,4000)}));
   return {storyId:story.id,title:story.title.slice(0,300),issueDate:p.issueDate,asOf:now(),writerId:story.peAgentId,reviewerId:p.reviewerId as PeAgentId,sources,
     gaps:story.gaps.filter(g=>g.status==='open'&&g.blocking&&!activeScopeAssessment(state,story,g)).slice(0,12).map(g=>({id:g.id,question:g.question,agentId:g.agentId,scopeEligible:agentFollowupGap(story,g)&&!operationalGap(state,story,g)})),feedback:p.feedback.slice(0,6)};
