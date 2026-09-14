@@ -1,0 +1,43 @@
+name: Verify autonomous queue hardening
+on:
+  push:
+    branches: [work/autonomous-newsroom-20260914]
+    paths: [.github/workflows/autonomy-harden.yml]
+permissions:
+  contents: write
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: transfer
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          path: source
+          ref: b97a016cb7da1950b426e9be46aa552e7ee33f9f
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: source/package-lock.json
+      - run: python3 transfer/.autonomy/harden.py
+      - run: npm ci
+        working-directory: source
+      - run: npm run typecheck
+        working-directory: source
+      - run: npm test
+        working-directory: source
+      - run: npm run build
+        working-directory: source
+      - name: Save verified corrections on the existing feature branch
+        working-directory: source
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src tests
+          git diff --cached --check
+          git commit -m 'Recheck queued dispatch admission and continue bounded review batches'
+          git push origin HEAD:refs/heads/feat/autonomous-newsroom
