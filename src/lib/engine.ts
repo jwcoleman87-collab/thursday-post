@@ -1,3 +1,4 @@
+import { canonicalJson, draftHashJson } from "./integrity-json";
 import { createHash } from "node:crypto";
 import type { ArticleDraft, ArticleSentence, Claim, ComplianceCheck, EvidenceGap, FindingInput, FormAnalysis, FormRunner, NewsroomState, PeAgentId, ResearchAgentId, ResearchProvider, ResearchRequest, ResearchResult, SourceItem, Story, Publication, TargetedRetriever } from "./domain";
 import { PE_AGENTS, RESEARCH_AGENTS } from "./domain";
@@ -239,7 +240,7 @@ function assess(state: NewsroomState, story: Story) {
 }
 
 export function draftHash(draft: Pick<ArticleDraft, "headline" | "byline" | "peAgentId" | "sentences" | "body" | "limitations" | "factReview" | "assessorReview" | "reviewRevision" | "label" | "deck" | "dateline" | "captions" | "access">): string {
-  return digest(JSON.stringify({ headline: draft.headline, byline: draft.byline, peAgentId: draft.peAgentId, sentences: draft.sentences, body: draft.body, limitations: draft.limitations, factReview: draft.factReview, reviewRevision: draft.reviewRevision, label: draft.label, deck: draft.deck, dateline: draft.dateline, captions: draft.captions, access: draft.access, assessorReview: draft.assessorReview }));
+  return digest(draftHashJson(draft));
 }
 
 export function verifiedClaim(state: NewsroomState, story: Story, id: string): Claim | undefined {
@@ -283,7 +284,7 @@ function draftProvenanceIntact(state: NewsroomState, story: Story): boolean {
 /** The archived evidence this story currently rests on. New sources or claims change it. */
 export function evidenceFingerprint(state: NewsroomState, story: Story): string {
   // Bind to evidence contents, not counts: same-length edits and changed relations matter.
-  return digest(JSON.stringify({
+  return digest(canonicalJson({
     sources: [...story.sourceItems].sort().map(id => [id, state.sourceItems.find(source => source.id === id) ?? null]),
     claims: [...story.claims].sort((a, b) => a.id.localeCompare(b.id)).map(claim => ({
       ...claim, evidence: [...claim.evidence].sort((a, b) => a.id.localeCompare(b.id)),
