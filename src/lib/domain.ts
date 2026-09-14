@@ -176,6 +176,7 @@ export interface Approval {
 }
 
 export interface Story {
+  autonomy?: import("./autonomous-contract").AutonomousProgress;
   id: string;
   title: string;
   summary: string;
@@ -258,6 +259,7 @@ export interface Publication {
 }
 
 export interface NewsroomState {
+  gatewayNotBefore?: number;
   schemaVersion: 1;
   stories: Story[];
   sourceItems: SourceItem[];
@@ -283,6 +285,8 @@ export interface DraftResult {
   researchRequests?: { agentId: ResearchAgentId; question: string }[];
 }
 export interface ResearchProvider {
+  composeArticle?: import("./autonomous-contract").AutonomousProvider["composeArticle"];
+  reviewArticle?: import("./autonomous-contract").AutonomousProvider["reviewArticle"];
   research(request: ResearchRequest): Promise<ResearchResult>;
   draft?(request: DraftRequest): Promise<DraftResult>;
 }

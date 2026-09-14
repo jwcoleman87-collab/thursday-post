@@ -17,11 +17,11 @@ export function createState(): NewsroomState {
   return { schemaVersion: 1, stories: [], sourceItems: [], tasks: [], runs: [], audit: [], publications: [] };
 }
 
-function audit(state: NewsroomState, action: string, detail: string, storyId?: string) {
+export function audit(state: NewsroomState, action: string, detail: string, storyId?: string) {
   state.audit.push({ id: stableId("audit", `${state.audit.length}|${action}|${storyId}|${now()}`), ...(storyId ? { storyId } : {}), action, detail, createdAt: now() });
 }
 
-function transition(state: NewsroomState, story: Story, status: Story["status"], detail: string) {
+export function transition(state: NewsroomState, story: Story, status: Story["status"], detail: string) {
   story.status = status;
   story.updatedAt = now();
   audit(state, `story.${status}`, detail, story.id);
@@ -41,7 +41,7 @@ export function routeStory(items: SourceItem[]): { researchAgentIds: ResearchAge
   return { researchAgentIds: [...agents].sort(), peAgentId };
 }
 
-function addSource(state: NewsroomState, item: SourceItem, mode: Story["mode"]) {
+export function addSource(state: NewsroomState, item: SourceItem, mode: Story["mode"]) {
   if (!item.id || !item.content || !item.title || !item.sourceName || !item.independenceKey || !item.url) throw new Error("Source item is missing required provenance.");
   if (mode === "live" && (item.demo || item.url.includes("example.invalid"))) throw new Error("Synthetic demo sources are forbidden in live runs.");
   if (!Number.isFinite(Date.parse(item.retrievedAt)) || !Number.isFinite(Date.parse(item.publishedAt))) throw new Error("Source timestamps must be valid ISO dates.");
@@ -50,7 +50,7 @@ function addSource(state: NewsroomState, item: SourceItem, mode: Story["mode"]) 
   if (!existing) state.sourceItems.push(structuredClone(item));
 }
 
-function sourceItems(state: NewsroomState, story: Story) { return state.sourceItems.filter(s => story.sourceItems.includes(s.id)); }
+export function sourceItems(state: NewsroomState, story: Story) { return state.sourceItems.filter(s => story.sourceItems.includes(s.id)); }
 
 /**
  * A gap this engine opened because a run ran out of request capacity, not because the
@@ -61,7 +61,7 @@ function deferredGap(story: Story, gap: EvidenceGap): boolean {
   return gap.id === stableId("gap", `${story.id}|provider-budget-agent-${gap.agentId}`);
 }
 
-function operationalGap(state: NewsroomState, story: Story, gap: EvidenceGap): boolean {
+export function operationalGap(state: NewsroomState, story: Story, gap: EvidenceGap): boolean {
   return gap.id === stableId("gap", `${story.id}|wall-clock-budget`) || deferredGap(story, gap) || state.tasks.some(task => task.storyId === story.id && gap.id === stableId("gap", `${story.id}|task-failure-${task.id}`));
 }
 
@@ -73,7 +73,7 @@ function recoverAgent(state: NewsroomState, story: Story, agentId: ResearchAgent
   }
 }
 
-function addGap(state: NewsroomState, story: Story, question: string, agentId: ResearchAgentId, blocking: boolean, key = question) {
+export function addGap(state: NewsroomState, story: Story, question: string, agentId: ResearchAgentId, blocking: boolean, key = question) {
   const id = stableId("gap", `${story.id}|${key}`);
   const old = story.gaps.find(g => g.id === id);
   if (old) return old;
@@ -160,7 +160,7 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 }
 
 /** The task slot a research request maps to, following the archived later-run retry chain. */
-function resolveTask(state: NewsroomState, story: Story, agentId: ResearchAgentId, round: number, question: string) {
+export function resolveTask(state: NewsroomState, story: Story, agentId: ResearchAgentId, round: number, question: string) {
   const revision = story.approvals.filter(a => a.decision === "send_back").length;
   const baseId = stableId("task", `${story.id}|${revision}|${agentId}|${round}|${question}|${[...story.sourceItems].sort().join(",")}`);
   let id = baseId;
@@ -242,7 +242,7 @@ export function draftHash(draft: Pick<ArticleDraft, "headline" | "byline" | "peA
   return digest(JSON.stringify({ headline: draft.headline, byline: draft.byline, peAgentId: draft.peAgentId, sentences: draft.sentences, body: draft.body, limitations: draft.limitations, factReview: draft.factReview, reviewRevision: draft.reviewRevision, label: draft.label, deck: draft.deck, dateline: draft.dateline, captions: draft.captions, access: draft.access, assessorReview: draft.assessorReview }));
 }
 
-function verifiedClaim(state: NewsroomState, story: Story, id: string): Claim | undefined {
+export function verifiedClaim(state: NewsroomState, story: Story, id: string): Claim | undefined {
   return story.claims.find(claim => claim.id === id && claim.status === "verified" && claim.verificationScope === "source_statement" && !claim.evidence.some(e => e.relation === "contradicts") && claim.evidence.some(e => e.exactMatch && e.relation === "supports" && state.sourceItems.some(source => story.sourceItems.includes(source.id) && source.id === e.sourceId && ["official", "data", "publication"].includes(source.type) && source.content.includes(e.quote) && (story.mode === "demo" || (!source.demo && !source.url.includes("example.invalid"))))));
 }
 
@@ -281,7 +281,7 @@ function draftProvenanceIntact(state: NewsroomState, story: Story): boolean {
 }
 
 /** The archived evidence this story currently rests on. New sources or claims change it. */
-function evidenceFingerprint(state: NewsroomState, story: Story): string {
+export function evidenceFingerprint(state: NewsroomState, story: Story): string {
   // Bind to evidence contents, not counts: same-length edits and changed relations matter.
   return digest(JSON.stringify({
     sources: [...story.sourceItems].sort().map(id => [id, state.sourceItems.find(source => source.id === id) ?? null]),
@@ -371,7 +371,7 @@ export function recordAssessedDraft(state: NewsroomState, storyId: string, raw: 
  * Missing primary records, corrections, task failures, budget deferrals and James's own
  * send-back requests derive from different keys and can never match, so they stay blocking.
  */
-function agentFollowupGap(story: Story, gap: EvidenceGap): boolean {
+export function agentFollowupGap(story: Story, gap: EvidenceGap): boolean {
   return gap.id === stableId("gap", `${story.id}|editorial-${gap.question}`);
 }
 
@@ -674,7 +674,7 @@ export function setPublicationAccess(state: NewsroomState, publicationId: string
   return publication;
 }
 
-async function draftStory(state: NewsroomState, story: Story, provider: ResearchProvider, deadline: number) {
+export async function draftStory(state: NewsroomState, story: Story, provider: ResearchProvider, deadline: number) {
   transition(state, story, "drafting", `PE Agent ${story.peAgentId} — ${PE_AGENTS[story.peAgentId - 1].name} — writes from verified Hub claims.`);
   const startedAt = now();
   const claims = story.claims.filter(c => c.status === "verified" && c.verificationScope === "source_statement");
@@ -716,7 +716,8 @@ async function draftStory(state: NewsroomState, story: Story, provider: Research
   state.runs.push({ id: stableId("run", `${draft.id}|editorial|${state.runs.length}`), storyId: story.id, agentType: "editorial", agentId: story.peAgentId, status: providerFailed ? "failed" : "completed", summary: providerFailed ? "PE model request failed. The verified-quotation briefing is retained for private review; the AI editorial stage needs another attempt." : `${sentences.length} evidence-linked sentences; public byline ${draft.byline}.`, startedAt, finishedAt: now() });
 }
 
-export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | "live"; items: SourceItem[]; deadline?: number; maxRounds?: number; maxResearchTasks?: number; maxTaskRetries?: number }, provider?: ResearchProvider, checkpoint?: (state: NewsroomState) => Promise<void>, retrieve?: TargetedRetriever): Promise<void> {
+export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | "live"; items: SourceItem[]; deadline?: number; maxRounds?: number; maxResearchTasks?: number; maxTaskRetries?: number; autonomous?: boolean }, provider?: ResearchProvider, checkpoint?: (state: NewsroomState) => Promise<void>, retrieve?: TargetedRetriever): Promise<void> {
+  const autonomy = input.mode === "live" && input.autonomous ? await import("./autonomous") : undefined;
   const deadline = Math.min(Date.now() + BUDGET.maxRunMs, input.deadline ?? Infinity);
   const storyBudget = input.mode === "live" ? BUDGET.maxLiveStories : BUDGET.maxStories;
   const roundBudget = Math.max(1, Math.min(BUDGET.maxRounds, input.maxRounds ?? BUDGET.maxRounds));
@@ -741,7 +742,7 @@ export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | 
   const candidates = [...groups.entries()].sort((a, b) => Number(b[1].some(s => s.isCorrection)) - Number(a[1].some(s => s.isCorrection)) || Date.parse(b[1][0].publishedAt) - Date.parse(a[1][0].publishedAt));
   const pending = state.stories.filter(s => s.mode === input.mode && ["candidate", "researching", "drafting", "sent_back"].includes(s.status));
   const outstanding = (story: Story) => story.gaps.filter(gap => gap.status === "open" && gap.blocking).length;
-  const retryable = state.stories.filter(story => story.mode === input.mode && story.status === "blocked" && story.gaps.some(gap => gap.status === "open" && operationalGap(state, story, gap))).sort((a, b) => outstanding(a) - outstanding(b) || Date.parse(a.updatedAt) - Date.parse(b.updatedAt));
+  const retryable = state.stories.filter(story => story.mode === input.mode && story.status === "blocked" && (autonomy ? autonomy.autonomousRetryable(state, story) : story.gaps.some(gap => gap.status === "open" && operationalGap(state, story, gap)))).sort((a, b) => outstanding(a) - outstanding(b) || Date.parse(a.updatedAt) - Date.parse(b.updatedAt));
   const queue: Story[] = [];
   const unfinished = [...pending, ...retryable];
   const isCorrectionStory = (story: Story) => !!story.correctionOf || sourceItems(state, story).some(item => item.isCorrection);
@@ -803,6 +804,7 @@ export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | 
         await save();
         continue;
       }
+      if (autonomy) await autonomy.prepareAutonomousResearch(state, story, retrieve, deadline, save);
       const wasSentBack = story.status === "sent_back";
       const resuming = story.status === "blocked";
       const commission = (agentId: ResearchAgentId) => `${RESEARCH_AGENTS[agentId - 1].description} Investigate this specific racing lead, preserve exact passages and identify unknowns.`;
@@ -833,6 +835,7 @@ export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | 
       await mapBounded(selectedRequests, GATEWAY_PACING.maxConcurrent, r => researchTask(state, story, r.agentId, 0, r.question, researcher, deadline, input.maxTaskRetries));
       assess(state, story);
       await save();
+      if (autonomy) { await autonomy.finishAutonomousStory(state, story, researcher, deadline, save); continue; }
       // Drafting may itself identify missing evidence; those requests share the same bounded loop.
       await draftStory(state, story, researcher, deadline);
       await save();

@@ -33,6 +33,7 @@ export function readiness(data:StoreData) {
     {name:'James’s sign-in',ready:Boolean(process.env.AUTH_SECRET && process.env.ADMIN_PASSWORD),detail:process.env.VERCEL?'Password and signed session required':'Local demo access; password required when hosted'},
     {name:'Live research',ready:process.env.NEWSROOM_AI_PAUSED!=='true' && liveProviderConfigured(),detail:process.env.NEWSROOM_AI_PAUSED==='true'?'Live AI is paused at James’s request. Complete Vercel AI Gateway account verification, then set NEWSROOM_AI_PAUSED=false and redeploy. Demo mode remains available.':'Selected model with API key or Vercel identity; available model access and credits are checked when a run starts'},
     {name:'Racing sources',ready:data.sources.some(source=>source.enabled),detail:`${data.sources.filter(source=>source.enabled).length} sources enabled; access and fetch errors are logged`},
+    {name:'Autonomous agents',ready:process.env.NEWSROOM_AUTONOMOUS_AGENTS==='true',detail:'Scheduled researchers, PE writer and a separate checking PE prepare source-linked articles; publication remains James’s decision.'},
     {name:'Reader email',ready:Boolean(process.env.RESEND_API_KEY && process.env.RESEND_WEBHOOK_SECRET && process.env.NEWSROOM_INBOUND_ADDRESS),detail:'Signed inbound webhook for a dedicated receiving address; Gmail forwarding is a separate mailbox setup. Private .eml import is available.'},
     {name:'Monitoring',ready:data.monitoring,detail:'One daily Vercel run when enabled; local GO works at any time'},
     {name:'Wagering legal review',ready:Boolean(WAGERING_POLICY.reviewedAt && WAGERING_POLICY.reviewedBy && WAGERING_POLICY.expiresAt && Date.parse(WAGERING_POLICY.expiresAt)>Date.now()),detail:'Dated jurisdiction policy is checked again at publication; James must explicitly acknowledge wagering review'}
@@ -91,10 +92,12 @@ export async function collectSourcesOnly(services:RunServices={}){
 export async function startRun(mode:'demo'|'live',services:RunServices={}) {
   if(mode==='live' && process.env.NEWSROOM_AI_PAUSED==='true')throw new HttpError('Live AI is paused at James’s request. Complete AI Gateway account verification and enable live AI in deployment settings. Choose Demo mode to use the complete practice workflow.',503);
   if(mode==='live' && !liveProviderConfigured())throw new HttpError('Configure NEWSROOM_MODEL and either an AI Gateway API key or Vercel identity before starting live research.',503);
+  const autonomous=mode==='live'&&process.env.NEWSROOM_AUTONOMOUS_AGENTS==='true';
   const deadline=boundedDeadline(services.deadline);
   const leaseId=randomUUID();
   const acquired=await transact(data=>{
     assertIdle(data);
+    if(autonomous&&(data.state.gatewayNotBefore??0)>Date.now())throw new HttpError('The shared gateway cooldown is still active. The scheduled workflow will resume after '+new Date(data.state.gatewayNotBefore!).toISOString(),503);
     const expiredLeaseId=data.lease?.id;
     if(data.lease)data.state.audit.push(event('run_recovered','An interrupted run lease expired. Checkpointed evidence was retained; unresolved work is retried.'));
     data.lease={id:leaseId,expiresAt:new Date(Date.now()+8*60*1000).toISOString(),mode};
@@ -125,7 +128,7 @@ export async function startRun(mode:'demo'|'live',services:RunServices={}) {
   try {
     await recoverExpiredRecord(acquired.expiredLeaseId);
     await beginRunRecord(mode,leaseId);recorded=true;
-    provider=mode==='live'?(services.createProvider??createLiveProvider)():undefined;
+    provider=mode==='live'?(services.createProvider??createLiveProvider)(autonomous?{maxRequests:4,onNotBefore:async until=>{state.gatewayNotBefore=Math.max(state.gatewayNotBefore??0,until);await checkpoint(state);}}:{}):undefined;
     await provider?.preflight();
     let items:SourceItem[];
     if(mode==='demo')items=[...structuredClone(DEMO_ITEMS),...snapshot.inbox.filter(item=>item.demo)];
@@ -145,7 +148,7 @@ export async function startRun(mode:'demo'|'live',services:RunServices={}) {
     await checkpoint(state);
     const registry=mode==='live'?(await readStore()).sources:[];
     const previousAgentRuns=new Set(state.runs.map(run=>run.id));
-    await runNewsroom(state,{mode,items,deadline,...(mode==='live'?{maxRounds:BUDGET.maxLiveRounds,maxResearchTasks:BUDGET.maxLiveResearchTasks,maxTaskRetries:BUDGET.maxLiveRetries}:{})},provider,checkpoint,mode==='live'?createTargetedRetriever(registry):undefined);
+    await runNewsroom(state,{mode,items,deadline,autonomous,...(mode==='live'?{maxRounds:BUDGET.maxLiveRounds,maxResearchTasks:BUDGET.maxLiveResearchTasks,maxTaskRetries:BUDGET.maxLiveRetries}:{})},provider,checkpoint,mode==='live'?createTargetedRetriever(registry):undefined);
     state.audit.push(event('run_finished',`${mode} run finished. Ready stories await James; unresolved evidence remains labelled.`));
     await checkpoint(state);
     const failedTasks=state.runs.some(run=>!previousAgentRuns.has(run.id)&&run.status==='failed');

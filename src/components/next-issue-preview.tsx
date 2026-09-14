@@ -17,7 +17,7 @@ function ProofStory({ story, lead = false }: { story: Story; lead?: boolean }) {
     {media ? <figure className="next-proof-image"><Image loader={({ src }) => src} unoptimized src={media.url} alt={media.proposedCaption || story.draft!.headline} width={900} height={520} /><figcaption>{media.proposedCaption || "Image attached to this story."}{!media.allowed ? " · Layout preview; usage rights pending." : ""}</figcaption></figure> : null}
     <h2>{story.draft!.headline}</h2>
     {story.draft!.deck ? <p className="paper-deck">{story.draft!.deck}</p> : null}
-    <p className="paper-excerpt">{story.draft!.sentences[0]?.text}</p>
+    <div className="paper-article-copy">{story.draft!.sentences.map((sentence,index)=><p key={index}>{sentence.text}</p>)}</div>
     <p className="paper-byline">By {story.draft!.byline.replace(/^By\s+/i, "")}</p>
     <Link className="paper-continue" href={`/editorial/${encodeURIComponent(story.id)}`}>Open story review ↗</Link>
   </article>;
