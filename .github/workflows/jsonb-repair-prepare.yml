@@ -1,0 +1,85 @@
+name: Verify JSONB integrity repair
+on:
+  push:
+    branches: [work/jsonb-integrity-20260914]
+    paths: [.github/workflows/jsonb-repair-prepare.yml]
+permissions:
+  contents: write
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: test-only
+          POSTGRES_DB: hash_integrity_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d hash_integrity_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      HASH_TEST_DATABASE_URL: postgresql://postgres:test-only@127.0.0.1:5432/hash_integrity_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: transfer
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          path: source
+          ref: d0d22738b0eff651d98cb6f542a20c713c7d7efa
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: source/package-lock.json
+      - name: Apply only checked serialization changes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import shutil, subprocess
+          root=Path('source')
+          engine=root/'src/lib/engine.ts'
+          assert subprocess.check_output(['git','hash-object','src/lib/engine.ts'],cwd=root,text=True).strip()=='2b45cc44a2b85f08c0f0503bccfab2417ce28f9b'
+          for name in ['src/lib/integrity-json.ts','tests/jsonb-integrity.test.ts','docs/JSONB_INTEGRITY_REPAIR.md','.github/workflows/ci.yml']:
+            target=root/name;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(Path('transfer')/name,target)
+          s=engine.read_text()
+          old='  return digest(JSON.stringify({ headline: draft.headline, byline: draft.byline, peAgentId: draft.peAgentId, sentences: draft.sentences, body: draft.body, limitations: draft.limitations, factReview: draft.factReview, reviewRevision: draft.reviewRevision, label: draft.label, deck: draft.deck, dateline: draft.dateline, captions: draft.captions, access: draft.access, assessorReview: draft.assessorReview }));'
+          assert s.count(old)==1
+          s=s.replace(old,'  return digest(draftHashJson(draft));')
+          s='import { canonicalJson, draftHashJson } from "./integrity-json";\n'+s
+          start=s.index('export function evidenceFingerprint(')
+          end=s.index('/** A delegated review',start)
+          part=s[start:end]
+          assert part.count('digest(JSON.stringify(')==1
+          s=s[:start]+part.replace('digest(JSON.stringify(','digest(canonicalJson(')+s[end:]
+          engine.write_text(s)
+          test=root/'tests/jsonb-integrity.test.ts'
+          s=test.read_text()
+          old="    assert.throws(()=>recordAssessedDraft(changed,story.id,{...content,...assessedDraftContext(changed,story.id)},true),/draft changed/i);"
+          assert s.count(old)==1
+          s=s.replace(old,"    const badBindings=assessedDraftContext(changed,story.id);\n    assert.throws(()=>recordAssessedDraft(changed,story.id,{...content,expectedDraftHash:badBindings.expectedDraftHash,expectedEvidenceFingerprint:badBindings.expectedEvidenceFingerprint},true),/draft changed/i);")
+          test.write_text(s)
+          print('Pinned source checked; integrity guards and stored records are not modified.')
+          PY
+      - run: npm ci
+        working-directory: source
+      - run: npm run typecheck
+        working-directory: source
+      - run: npm test
+        working-directory: source
+      - run: npm run build
+        working-directory: source
+      - name: Preserve tested source on separate review branch
+        working-directory: source
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/lib/integrity-json.ts src/lib/engine.ts tests/jsonb-integrity.test.ts docs/JSONB_INTEGRITY_REPAIR.md .github/workflows/ci.yml
+          git diff --cached --check
+          git commit -m 'Keep draft integrity and evidence bindings stable across PostgreSQL jsonb'
+          git push origin HEAD:refs/heads/fix/jsonb-draft-integrity
+          git rev-parse HEAD
