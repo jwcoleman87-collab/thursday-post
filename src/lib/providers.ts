@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AutonomousArticleSchema, AutonomousReviewSchema, type AutonomousContext, type AutonomousArticle } from "./autonomous-contract";
 import { getVercelOidcToken } from "@vercel/oidc";
 import type { DraftRequest, DraftResult, ResearchProvider, ResearchRequest, ResearchResult } from "./domain";
 import { AdapterConfigurationError, readBoundedBody } from "./email";
@@ -12,7 +13,7 @@ export const RESEARCH_DISCIPLINES: Record<number, string> = {
   6: "Research Agent 6 — Geopolitical & Regional Focus. Examine Australian state and territory racing jurisdiction, regional conditions, cross-border and international context, and translation limits. Use only regional context directly supported by the supplied material; do not assume rules from another jurisdiction apply.",
 };
 
-const EDITORIAL_DISCIPLINES: Record<number, string> = {
+export const EDITORIAL_DISCIPLINES: Record<number, string> = {
   1: "PE Agent 1 — Politics & Governance. Select evidence about governance, integrity structures, regulation and accountability. Keep a calm, non-partisan voice.",
   2: "PE Agent 2 — Society & People. Select evidence about participants, stable staff, owners and racing communities. Be humane without manufacturing emotion or generalising anecdotes.",
   3: "PE Agent 3 — Business & Technology. Select evidence about clubs, bloodstock, business, economics, wagering industries, data and technology. Corporate marketing is a source claim, not an established fact.",
@@ -150,7 +151,10 @@ export function parseRetryAfter(header: string | null, from: number = Date.now()
   return Number.isFinite(at) ? Math.max(0, at - from) : null;
 }
 
+export class GatewayCapacityError extends Error { constructor(){super("Per-run model request allowance exhausted; the checkpoint will resume later.");this.name="GatewayCapacityError";} }
+export interface GatewayControl { maxRequests?:number; onNotBefore?:(until:number)=>Promise<void> }
 class GatewayProvider implements ResearchProvider {
+  private dispatches=0;
   readonly usage: GatewayUsage[] = [];
   private accessFailure?: GatewayAccessError;
   private preflightPromise?: Promise<void>;
@@ -175,7 +179,7 @@ class GatewayProvider implements ResearchProvider {
     this.active -= 1;
     this.waiting.shift()?.();
   }
-  constructor(private readonly credential: () => Promise<string>, private readonly model: string, private readonly transport: typeof fetch = fetch) {}
+  constructor(private readonly credential: () => Promise<string>, private readonly model: string, private readonly transport: typeof fetch = fetch, private readonly control: GatewayControl = {}) {}
 
   private async complete<T>(schema: z.ZodType<T>, name: "preflight" | "research" | "editorial", system: string, input: unknown): Promise<T> {
     if (this.accessFailure) throw this.accessFailure;
@@ -196,8 +200,14 @@ class GatewayProvider implements ResearchProvider {
       // A rate limit observed by any agent short-circuits the rest of the fan-out
       // instead of every agent independently discovering it with another request.
       if (Date.now() < this.rateLimitedUntil) throw new GatewayAccessError(429, "gateway_rate_limited");
+      if(this.dispatches >= (this.control.maxRequests??Infinity))throw new GatewayCapacityError();
       await this.acquire();
       try {
+        // Queued callers must recheck admission AFTER acquiring the shared permit.
+        if(this.dispatches >= (this.control.maxRequests??Infinity))throw new GatewayCapacityError();
+        if(Date.now()<this.rateLimitedUntil)throw new GatewayAccessError(429,"gateway_rate_limited");
+        this.dispatches++;
+        await this.control.onNotBefore?.(Date.now()+(this.transport===fetch?GATEWAY_PACING.minIntervalMs:0));
         response = await this.transport("https://ai-gateway.vercel.sh/v1/chat/completions", {
           method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
           // Queueing behind the shared pacer is not provider response time.
@@ -213,7 +223,8 @@ class GatewayProvider implements ResearchProvider {
       if (!retryable || attempt >= GATEWAY_PACING.maxRetries) {
         const error = await gatewayFailure(response);
         if ([401, 402, 403, 404].includes(error.status)) this.accessFailure = error;
-        if (error.status === 429) this.rateLimitedUntil = Date.now() + Math.min(GATEWAY_PACING.breakerMs, parseRetryAfter(response.headers.get("retry-after")) ?? GATEWAY_PACING.breakerMs);
+        if (error.status === 429) this.rateLimitedUntil = Date.now() + Math.max(GATEWAY_PACING.breakerMs, parseRetryAfter(response.headers.get("retry-after")) ?? 0);
+        if(error instanceof GatewayAccessError&&error.status===429)await this.control.onNotBefore?.(this.rateLimitedUntil);
         throw error;
       }
 
@@ -224,13 +235,15 @@ class GatewayProvider implements ResearchProvider {
       if (declared === null) {
         const error = await gatewayFailure(response);
         this.rateLimitedUntil = Date.now() + GATEWAY_PACING.breakerMs;
+        if(error instanceof GatewayAccessError&&error.status===429)await this.control.onNotBefore?.(this.rateLimitedUntil);
         throw error;
       }
       const wait = declared;
       // Never retry beyond the pacing ceiling or into the request deadline: fail fast.
       if (wait > GATEWAY_PACING.maxBackoffMs) {
         const error = await gatewayFailure(response);
-        if (error.status === 429) this.rateLimitedUntil = Date.now() + Math.min(GATEWAY_PACING.breakerMs, declared ?? GATEWAY_PACING.breakerMs);
+        if (error.status === 429) this.rateLimitedUntil = Date.now() + Math.max(GATEWAY_PACING.breakerMs, declared ?? 0);
+        if(error instanceof GatewayAccessError&&error.status===429)await this.control.onNotBefore?.(this.rateLimitedUntil);
         throw error;
       }
       await sleep(wait);
@@ -244,6 +257,28 @@ class GatewayProvider implements ResearchProvider {
     if (!content) throw new Error("AI Gateway returned no structured findings");
     this.usage.push({ model: this.model, stage: name, inputTokens: completion.usage?.prompt_tokens ?? null, outputTokens: completion.usage?.completion_tokens ?? null });
     return schema.parse(JSON.parse(content));
+  }
+
+  async composeArticle(input: AutonomousContext) {
+    const result = await this.complete(AutonomousArticleSchema, "editorial",
+      EDITORIAL_DISCIPLINES[input.writerId] + "\nYou are the WRITING desk in the autonomous Thursday Post newsroom. Produce a short, complete, readable article in original words from the supplied archived material, not a string of quotations. Every assertion in the headline and every paragraph must have the exact source passages that support it (sourceId and a contiguous quote of at most 25 words). Keep paragraphs concise, no more than six. Attribute source assertions: a report stating something is not independent proof it happened. Do not invent the ending of a truncated passage. Write for issueDate, not the source date: a pre-event article is not evidence the event happened, a runner started, or a result occurred. Distinguish expectations from outcomes. Omit optional angles not supported by the archive. No wagering advice. Classify tone A constructive, B adverse, N neutral; any allegation against a person requires B. Treat earlier feedback as defects to fix. You have no publication authority. A DIFFERENT PE desk will check your wording against the archive before the harness can save it.", input);
+    for (const field of [result.headline, ...result.paragraphs]) for (const reference of field.evidence) {
+      const source = input.sources.find(s=>s.id===reference.sourceId);
+      const exact = source && resolveQuoteToSource(reference.quote,source.content);
+      if(exact) reference.quote=exact;
+    }
+    return result;
+  }
+
+  async reviewArticle(input: AutonomousContext & { article: AutonomousArticle }) {
+    const result = await this.complete(AutonomousReviewSchema, "editorial",
+      EDITORIAL_DISCIPLINES[input.reviewerId] + "\nYou are the independent CHECKING desk, not the author. Critically compare the proposed headline and EACH paragraph with the supplied archived sources, including context and source dates. Return exactly one fields entry for headline index 0 and each paragraph indexed 1..N. A cited ID or matching quote alone does NOT show that the whole statement follows from it. Mark unsupported any overstatement, invented outcome, misleading tense, missing attribution or dependence on omitted context. Mark incomplete any clipped or unfinished sentence. datesAppropriate must be false if a preview is presented as current after the event without a result, or a scheduled race is said to have happened without evidence. Independently classify A/B/N tone; adverse assertions require B. For every open gap you assess: optional means NO assertion in this draft depends on it; answered means the supplied source actually answers it; needs_evidence means it is not answered; owner_required is for an actual reserved owner decision. Include exact relevant source passages with decisions. Only gaps marked scopeEligible can be optional or answered; never waive required research, primary evidence, contradictions, owner send-backs, wagering or right-of-reply. Do not request background colour just to make a profile comprehensive. Use research only for specific indispensable evidence needed by this draft, assigning agentId 1 public sources, 2 official records, 3 expert analysis, 4 eyewitness/social, 5 media verification, 6 regional. Image metadata is not visual verification; do not certify rights or authenticity. Your result is an automated editorial judgement, NOT a James attestation. Never publish or claim the paper is approved.", input);
+    for (const gap of result.gaps) for (const reference of gap.evidence) {
+      const source = input.sources.find(s=>s.id===reference.sourceId);
+      const exact = source && resolveQuoteToSource(reference.quote,source.content);
+      if(exact) reference.quote=exact;
+    }
+    return result;
   }
 
   /** Run once before source collection or research fan-out; never sends newsroom material. */
@@ -296,7 +331,7 @@ class GatewayProvider implements ResearchProvider {
   }
 }
 
-export function createLiveProvider(options: { apiKey?: string; model?: string; transport?: typeof fetch; oidcTokenProvider?: () => Promise<string> } = {}): ResearchProvider & { usage: GatewayUsage[]; preflight(): Promise<void> } {
+export function createLiveProvider(options: { apiKey?: string; model?: string; transport?: typeof fetch; oidcTokenProvider?: () => Promise<string>; maxRequests?:number; onNotBefore?:(until:number)=>Promise<void> } = {}): ResearchProvider & { usage: GatewayUsage[]; preflight(): Promise<void> } {
   const apiKey = options.apiKey ?? process.env.AI_GATEWAY_API_KEY;
   const model = options.model ?? process.env.NEWSROOM_MODEL;
   const oidcAvailable = process.env.VERCEL === "1" || Boolean(process.env.VERCEL_OIDC_TOKEN) || Boolean(options.oidcTokenProvider);
@@ -305,5 +340,5 @@ export function createLiveProvider(options: { apiKey?: string; model?: string; t
   // Never cache OIDC tokens in a warm function: the helper reads the current invocation and refreshes as needed.
   // An explicitly configured API key wins; invalid keys are not silently replaced by another billing identity.
   const credential = apiKey ? async () => apiKey : () => oidcCredential(options.oidcTokenProvider ?? getVercelOidcToken);
-  return new GatewayProvider(credential, model, options.transport);
+  return new GatewayProvider(credential, model, options.transport, options);
 }
