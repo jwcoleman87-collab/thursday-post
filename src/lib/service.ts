@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { BUDGET, decideStory, runNewsroom, projectScopeAssessments } from './engine';
+import { BUDGET, autoPublishReady, decideStory, runNewsroom, projectScopeAssessments } from './engine';
 import { DEMO_ITEMS } from './fixtures';
 import { collectSourceItems, createTargetedRetriever, type RegisteredSource, validateSourceUrl } from './ingestion';
 import { createLiveProvider, liveProviderConfigured, GatewayAccessError } from './providers';
@@ -9,6 +9,7 @@ import { HttpError } from './auth';
 import type { NewsroomState, SourceItem } from './domain';
 import { WAGERING_POLICY } from './policy';
 import { beginRunRecord, finishRunRecord } from './operations';
+import { sectionFor } from './dashboard';
 
 /** Trusted server dependencies permit isolated integration tests; HTTP actions never accept these fields. */
 export interface RunServices { deadline?: number; collect?: typeof collectSourceItems; createProvider?: typeof createLiveProvider }
@@ -24,6 +25,8 @@ async function recoverExpiredRecord(id?:string) {
   catch(error){if(!(error instanceof HttpError&&error.status===404))throw error;}
 }
 
+/** Model calls per scheduled invocation (preflight, research, writing and checking share it). Runs every two hours. */
+export const AUTONOMOUS_REQUESTS_PER_RUN=10;
 export const contactEmail=()=>process.env.NEWSROOM_CONTACT_EMAIL || 'workbenchadmin@gmail.com';
 const active=(data:StoreData)=>Boolean(data.lease && Date.parse(data.lease.expiresAt)>Date.now());
 const event=(action:string,detail:string)=>({id:randomUUID(),action,detail,createdAt:new Date().toISOString()});
@@ -128,7 +131,7 @@ export async function startRun(mode:'demo'|'live',services:RunServices={}) {
   try {
     await recoverExpiredRecord(acquired.expiredLeaseId);
     await beginRunRecord(mode,leaseId);recorded=true;
-    provider=mode==='live'?(services.createProvider??createLiveProvider)(autonomous?{maxRequests:4,onNotBefore:async until=>{state.gatewayNotBefore=Math.max(state.gatewayNotBefore??0,until);await checkpoint(state);}}:{}):undefined;
+    provider=mode==='live'?(services.createProvider??createLiveProvider)(autonomous?{maxRequests:AUTONOMOUS_REQUESTS_PER_RUN,onNotBefore:async until=>{state.gatewayNotBefore=Math.max(state.gatewayNotBefore??0,until);await checkpoint(state);}}:{}):undefined;
     await provider?.preflight();
     let items:SourceItem[];
     if(mode==='demo')items=[...structuredClone(DEMO_ITEMS),...snapshot.inbox.filter(item=>item.demo)];
@@ -148,7 +151,7 @@ export async function startRun(mode:'demo'|'live',services:RunServices={}) {
     await checkpoint(state);
     const registry=mode==='live'?(await readStore()).sources:[];
     const previousAgentRuns=new Set(state.runs.map(run=>run.id));
-    await runNewsroom(state,{mode,items,deadline,autonomous,...(mode==='live'?{maxRounds:BUDGET.maxLiveRounds,maxResearchTasks:BUDGET.maxLiveResearchTasks,maxTaskRetries:BUDGET.maxLiveRetries}:{})},provider,checkpoint,mode==='live'?createTargetedRetriever(registry):undefined);
+    await runNewsroom(state,{mode,items,deadline,autonomous,autoPublish:snapshot.autoPublish!==false,...(mode==='live'?{maxRounds:BUDGET.maxLiveRounds,maxResearchTasks:autonomous?3:BUDGET.maxLiveResearchTasks,maxTaskRetries:BUDGET.maxLiveRetries,...(autonomous?{maxStories:2}:{})}:{})},provider,checkpoint,mode==='live'?createTargetedRetriever(registry):undefined);
     state.audit.push(event('run_finished',`${mode} run finished. Ready stories await James; unresolved evidence remains labelled.`));
     await checkpoint(state);
     const failedTasks=state.runs.some(run=>!previousAgentRuns.has(run.id)&&run.status==='failed');
@@ -171,7 +174,8 @@ export const ActionSchema=z.discriminatedUnion('action',[
   z.object({action:z.literal('decision'),storyId:z.string().min(1),decision:z.enum(['approve','reject','send_back']),note:z.string().max(3000).default(''),wageringAcknowledged:z.boolean().default(false),expectedDraftHash:z.string().optional()}),
   z.object({action:z.literal('source'),source:sourceInput}),
   z.object({action:z.literal('source_toggle'),sourceId:z.string(),enabled:z.boolean()}),
-  z.object({action:z.literal('monitoring'),enabled:z.boolean()})
+  z.object({action:z.literal('monitoring'),enabled:z.boolean()}),
+  z.object({action:z.literal('auto_publish'),enabled:z.boolean()})
 ]);
 export async function handleAction(input:unknown) {
   const parsed=ActionSchema.safeParse(input);
@@ -201,6 +205,10 @@ export async function handleAction(input:unknown) {
       source.enabled=body.enabled;
       if(body.enabled)source.termsReviewedAt=new Date().toISOString();
       data.state.audit.push(event('source_updated',`${source.name}: ${body.enabled?'enabled':'disabled'}`));
+    } else if(body.action==='auto_publish') {
+      data.autoPublish=body.enabled;
+      data.state.audit.push(event('autopublish_updated',body.enabled?'Automatic publishing switched on.':'Automatic publishing switched off. Every article now waits for you.'));
+      if(body.enabled&&!active(data))autoPublishReady(data.state);
     } else {
       data.monitoring=body.enabled;
       data.state.audit.push(event('monitoring_updated',body.enabled?'Daily source monitoring enabled. No automatic publication.':'Source monitoring paused.'));
@@ -225,6 +233,6 @@ export async function publicPayload(options:{canReadPaid?:boolean}={}) {
     const locked=!withdrawn&&publication.access!=='public'&&!options.canReadPaid;
     const correction=state.publications.find(p=>p.correctionOf===publication.id&&p.public&&p.mode==='live'&&p.status!=='removed'&&p.status!=='retracted');
     const notice=publication.statusHistory?.at(-1)?.note||publication.correctionReason||(correction?'This report has a published correction. See Corrections & Updates.':undefined);
-    return {id:publication.id,headline:publication.draft.headline,byline:publication.draft.byline,section:['Politics & Governance','Society & People','Business & Technology','Global Affairs'][publication.draft.peAgentId-1],publishedAt:publication.publishedAt,paragraphs:locked||withdrawn?[]:publication.draft.sentences.map(s=>({text:s.text,claimIds:s.claimIds})),sources:locked||withdrawn?[]:state.sourceItems.filter(source=>ids.has(source.id)&&source.type!=='email'&&source.url.startsWith('https://')).map(source=>({title:source.title,url:source.url})),limitations:locked||withdrawn?[]:publication.draft.limitations,excerpt:withdrawn?'':publication.draft.sentences[0]?.text.slice(0,180)||'',locked,status:publication.status||'published',notice,correctionOf:publication.correctionOf,correctionId:correction?.id,deck:withdrawn?undefined:publication.draft.deck,label:publication.draft.label};
+    return {id:publication.id,headline:publication.draft.headline,byline:publication.draft.byline,section:sectionFor(publication.draft.peAgentId),publishedAt:publication.publishedAt,paragraphs:locked||withdrawn?[]:publication.draft.sentences.map(s=>({text:s.text,claimIds:s.claimIds})),sources:locked||withdrawn?[]:state.sourceItems.filter(source=>ids.has(source.id)&&source.type!=='email'&&source.url.startsWith('https://')).map(source=>({title:source.title,url:source.url})),limitations:locked||withdrawn?[]:publication.draft.limitations,excerpt:withdrawn?'':publication.draft.sentences[0]?.text.slice(0,180)||'',locked,status:publication.status||'published',notice,correctionOf:publication.correctionOf,correctionId:correction?.id,deck:withdrawn?undefined:publication.draft.deck,label:publication.draft.label};
   })};
 }

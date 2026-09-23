@@ -13,6 +13,8 @@ export interface StoreData {
   sources: RegisteredSource[];
   inbox: SourceItem[];
   monitoring: boolean;
+  /** James's standing instruction: checked, non-sensitive articles publish without a manual click. Undefined means on. */
+  autoPublish?: boolean;
   sourceCursor: number;
   lease?: { id: string; expiresAt: string; mode: 'demo'|'live' };
   loginAttempts: Record<string, { count: number; until: number }>;

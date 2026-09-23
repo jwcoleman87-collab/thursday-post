@@ -165,14 +165,14 @@ test("new published evidence creates an owner alert without changing the approve
   assert.equal(story.publishedEvidenceAlerts?.length, 1);
 });
 
-test("member access is the publication default and a free sample requires an explicit audited action", async () => {
+test("free reading is the publication default while sales are closed and members-only requires an explicit audited action", async () => {
   const { state, story } = await ready();
   decideStory(state, story.id, "approve", "Reviewed record", false);
   const publication = state.publications[0];
-  assert.equal(publication.access, "members");
-  const snapshot = structuredClone(publication.draft);
-  setPublicationAccess(state, publication.id, { access: "public", note: "Make this one approved briefing available as a free sample." });
   assert.equal(publication.access, "public");
+  const snapshot = structuredClone(publication.draft);
+  setPublicationAccess(state, publication.id, { access: "members", note: "Move this approved briefing behind the member paywall." });
+  assert.equal(publication.access, "members");
   assert.deepEqual(publication.draft, snapshot);
   assert.ok(state.audit.some(item => item.action === "publication.access_changed"));
 });

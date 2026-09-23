@@ -99,5 +99,8 @@ test('published sources include headline-only evidence without exposing assessor
  const paid=await publicPayload({canReadPaid:true});const urls=paid.articles[0].sources.map(s=>s.url);
  assert.ok(urls.includes(headlineSource.url));assert.ok(urls.includes(source.url));assert.ok(!urls.includes(unrelatedSource.url));
  assert.ok(!JSON.stringify(paid).includes(input.note));
- const anonymous=await publicPayload();assert.deepEqual(anonymous.articles[0].sources,[]);
+ // Free-to-read is the default: anonymous readers see the same public sources, never assessor notes.
+ const anonymous=await publicPayload();assert.deepEqual(anonymous.articles[0].sources,paid.articles[0].sources);assert.ok(!JSON.stringify(anonymous).includes(input.note));
+ await transact(d=>{d.state.publications[0].access='members';});
+ const locked=await publicPayload();assert.deepEqual(locked.articles[0].sources,[]);
 });

@@ -1,0 +1,29 @@
+# Wakes the Thursday Post agents every two hours. Vercel's free plan only allows one
+# scheduled run a day, which is too slow to research, write and check a full edition.
+# Needs one repository secret: CRON_SECRET (the same value as in Vercel).
+name: Newsroom timer
+on:
+  schedule:
+    - cron: '17 */2 * * *'
+  workflow_dispatch: {}
+concurrency:
+  group: newsroom-timer
+  cancel-in-progress: false
+jobs:
+  wake-agents:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Run the newsroom
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then echo "::error::Add the CRON_SECRET repository secret (Settings → Secrets and variables → Actions)."; exit 1; fi
+          status=$(curl -sS -o response.json -w '%{http_code}' --max-time 320 \
+            -H "Authorization: Bearer $CRON_SECRET" https://the-racing-desk.vercel.app/api/cron)
+          cat response.json; echo
+          # 409 means a run was already in progress; that is fine.
+          if [ "$status" = "200" ] || [ "$status" = "409" ]; then exit 0; fi
+          # 503 covers AI cooldowns and paused AI; the dashboard explains these in plain English.
+          if [ "$status" = "503" ]; then echo "::warning::Newsroom deferred this run (status 503)."; exit 0; fi
+          echo "::error::Newsroom run failed with HTTP $status"; exit 1

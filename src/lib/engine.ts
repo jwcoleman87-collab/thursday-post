@@ -7,7 +7,7 @@ import { GATEWAY_PACING } from "./providers";
 import { checkWagering, isWagering } from "./policy";
 import { AssessedDraftInput } from "./assessed-draft";
 
-export const BUDGET = { maxStories: 3, maxLiveStories: 1, maxRounds: 2, maxLiveRounds: 1, maxLiveResearchTasks: 2, maxLiveRetries: 0, retries: 1, taskTimeoutMs: 48_000, maxRunMs: 240_000, maxFindings: 8, maxQuoteWordsPerSource: 25, maxAdditionalSources: 2, retrievalTimeoutMs: 20_000 } as const;
+export const BUDGET = { maxStories: 3, maxLiveStories: 1, maxRounds: 2, maxLiveRounds: 1, maxLiveResearchTasks: 2, maxLiveRetries: 0, retries: 1, taskTimeoutMs: 60_000, maxRunMs: 240_000, maxFindings: 8, maxQuoteWordsPerSource: 25, maxAdditionalSources: 2, retrievalTimeoutMs: 20_000 } as const;
 const now = () => new Date().toISOString();
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 const stableId = (prefix: string, value: string) => `${prefix}-${digest(value).slice(0, 20)}`;
@@ -351,7 +351,7 @@ export function recordAssessedDraft(state: NewsroomState, storyId: string, raw: 
   const draft: ArticleDraft = { id: "", headline: input.headline.text, byline: `Agent ${story.peAgentId}`,
     peAgentId: story.peAgentId, sentences, body: sentences.map(sentence => sentence.text).join("\n\n"), hash: "", createdAt: now(),
     limitations: ["Editorial wording was checked by the newsroom assessor against the linked archived passages under delegated authority. This is not James's personal fact review or independent proof of underlying source assertions."],
-    access: story.draft!.access ?? story.access ?? "members", ...(story.draft!.label ? { label: story.draft!.label } : {}) };
+    access: story.draft!.access ?? story.access ?? "public", ...(story.draft!.label ? { label: story.draft!.label } : {}) };
   if (!quotationBudgetMet(story, draft)) throw new Error("The article exceeds the existing per-source quotation allowance. Paraphrase or choose shorter complete quotations.");
   const newlyAdverse = input.editorialTone === "B" && story.editorialTone !== "B";
   story.editorialTone = input.editorialTone;
@@ -708,7 +708,7 @@ export async function draftStory(state: NewsroomState, story: Story, provider: R
   if (story.claims.some(c => c.status !== "verified")) limitations.push("Unverified reader allegations, opinions and inferences are retained in the private research Hub and excluded from this article.");
   if (story.media.some(m => !m.allowed)) limitations.push("Unverified images have been omitted.");
   const draft: ArticleDraft = {
-    id: stableId("draft", `${story.id}|${story.approvals.length}|${JSON.stringify(sentences)}`), headline: `${story.mode === "demo" ? "Demo: " : ""}Thoroughbred racing — ${PE_AGENTS[story.peAgentId - 1].name.toLowerCase()} briefing`, byline: `Agent ${story.peAgentId}`, peAgentId: story.peAgentId, sentences, body: sentences.map(s => s.text).join("\n\n"), hash: "", createdAt: now(), limitations, access: story.access ?? "members", ...(story.correctionOf ? { label: "correction" } : {}),
+    id: stableId("draft", `${story.id}|${story.approvals.length}|${JSON.stringify(sentences)}`), headline: `${story.mode === "demo" ? "Demo: " : ""}Thoroughbred racing — ${PE_AGENTS[story.peAgentId - 1].name.toLowerCase()} briefing`, byline: `Agent ${story.peAgentId}`, peAgentId: story.peAgentId, sentences, body: sentences.map(s => s.text).join("\n\n"), hash: "", createdAt: now(), limitations, access: story.access ?? "public", ...(story.correctionOf ? { label: "correction" } : {}),
   };
   draft.hash = draftHash(draft);
   invalidateChangedReply(state, story, draft);
@@ -717,10 +717,10 @@ export async function draftStory(state: NewsroomState, story: Story, provider: R
   state.runs.push({ id: stableId("run", `${draft.id}|editorial|${state.runs.length}`), storyId: story.id, agentType: "editorial", agentId: story.peAgentId, status: providerFailed ? "failed" : "completed", summary: providerFailed ? "PE model request failed. The verified-quotation briefing is retained for private review; the AI editorial stage needs another attempt." : `${sentences.length} evidence-linked sentences; public byline ${draft.byline}.`, startedAt, finishedAt: now() });
 }
 
-export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | "live"; items: SourceItem[]; deadline?: number; maxRounds?: number; maxResearchTasks?: number; maxTaskRetries?: number; autonomous?: boolean }, provider?: ResearchProvider, checkpoint?: (state: NewsroomState) => Promise<void>, retrieve?: TargetedRetriever): Promise<void> {
+export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | "live"; items: SourceItem[]; deadline?: number; maxRounds?: number; maxResearchTasks?: number; maxTaskRetries?: number; autonomous?: boolean; autoPublish?: boolean; maxStories?: number }, provider?: ResearchProvider, checkpoint?: (state: NewsroomState) => Promise<void>, retrieve?: TargetedRetriever): Promise<void> {
   const autonomy = input.mode === "live" && input.autonomous ? await import("./autonomous") : undefined;
   const deadline = Math.min(Date.now() + BUDGET.maxRunMs, input.deadline ?? Infinity);
-  const storyBudget = input.mode === "live" ? BUDGET.maxLiveStories : BUDGET.maxStories;
+  const storyBudget = Math.max(1, Math.min(BUDGET.maxStories, input.maxStories ?? (input.mode === "live" ? BUDGET.maxLiveStories : BUDGET.maxStories)));
   const roundBudget = Math.max(1, Math.min(BUDGET.maxRounds, input.maxRounds ?? BUDGET.maxRounds));
   const researcher = provider ?? (input.mode === "demo" ? demoResearchProvider : recordProvider);
   const save = async () => { if (checkpoint) await checkpoint(state); };
@@ -740,6 +740,14 @@ export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | 
     const key = normalise(item.title);
     groups.set(key, [...(groups.get(key) ?? []), item]);
   }
+  // Wagering is judged on the words readers will see. Racing sources mention punters and odds in passing; earlier
+  // versions flagged whole stories from their sources, which blocked non-betting articles permanently.
+  for (const story of state.stories) {
+    if (story.mode !== input.mode || !story.wagering || story.correctionOf || !story.draft || ["published", "rejected"].includes(story.status)) continue;
+    const text = [story.draft.headline, story.draft.deck, story.draft.body, ...(story.draft.captions ?? []).map(caption => caption.text)].filter(Boolean).join("\n");
+    if (!isWagering(text)) { story.wagering = false; story.compliance = checks(state, story); if (story.status === "blocked" && story.draft.assessorReview && !story.compliance.some(c => c.status === "blocked")) transition(state, story, "waiting_approval", "The article itself contains no wagering material; the source-based wagering hold was lifted."); }
+  }
+  if (input.autoPublish && input.mode === "live") { autoPublishReady(state); await save(); }
   const candidates = [...groups.entries()].sort((a, b) => Number(b[1].some(s => s.isCorrection)) - Number(a[1].some(s => s.isCorrection)) || Date.parse(b[1][0].publishedAt) - Date.parse(a[1][0].publishedAt));
   const pending = state.stories.filter(s => s.mode === input.mode && ["candidate", "researching", "drafting", "sent_back"].includes(s.status));
   const outstanding = (story: Story) => story.gaps.filter(gap => gap.status === "open" && gap.blocking).length;
@@ -789,7 +797,7 @@ export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | 
     if (queue.length >= storyBudget) { audit(state, "selection.deferred", `Deferred ${items[0].title}: per-run story budget reached.`); continue; }
     const route = routeStory(items);
     const correctionOf = items.find(i => i.relatedStoryId)?.relatedStoryId;
-    story = { id, title: items[0].title, summary: items[0].content.slice(0, 280), mode: input.mode, status: "candidate", selectedReason: `${items.some(i => i.isCorrection) ? "Reader correction receives priority. " : ""}Relevant thoroughbred-racing lead with ${items.length} archived source(s); assigned multiple research disciplines for primary-record verification and context.`, ...route, sourceItems: items.map(i => i.id), claims: [], findings: [], gaps: [], media: items.flatMap(i => i.media ?? []).map(m => ({ ...structuredClone(m), allowed: false })), compliance: [], approvals: [], wagering: isWagering(items.map(i => `${i.title} ${i.content}`).join(" ")), ...(correctionOf ? { correctionOf } : {}), createdAt: now(), updatedAt: now() };
+    story = { id, title: items[0].title, summary: items[0].content.slice(0, 280), mode: input.mode, status: "candidate", selectedReason: `${items.some(i => i.isCorrection) ? "Reader correction receives priority. " : ""}Relevant thoroughbred-racing lead with ${items.length} archived source(s); assigned multiple research disciplines for primary-record verification and context.`, ...route, sourceItems: items.map(i => i.id), claims: [], findings: [], gaps: [], media: items.flatMap(i => i.media ?? []).map(m => ({ ...structuredClone(m), allowed: false })), compliance: [], approvals: [], wagering: false, ...(correctionOf ? { correctionOf } : {}), createdAt: now(), updatedAt: now() };
     state.stories.push(story);
     queue.push(story);
     audit(state, "discovery.candidate_created", story.selectedReason, story.id);
@@ -836,7 +844,7 @@ export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | 
       await mapBounded(selectedRequests, GATEWAY_PACING.maxConcurrent, r => researchTask(state, story, r.agentId, 0, r.question, researcher, deadline, input.maxTaskRetries));
       assess(state, story);
       await save();
-      if (autonomy) { await autonomy.finishAutonomousStory(state, story, researcher, deadline, save); continue; }
+      if (autonomy) { await autonomy.finishAutonomousStory(state, story, researcher, deadline, save); if (input.autoPublish) { autoPublishReady(state); await save(); } continue; }
       // Drafting may itself identify missing evidence; those requests share the same bounded loop.
       await draftStory(state, story, researcher, deadline);
       await save();
@@ -874,8 +882,41 @@ export async function runNewsroom(state: NewsroomState, input: { mode: "demo" | 
       await save();
     }
   }
+  if (input.autoPublish && input.mode === "live") autoPublishReady(state);
   audit(state, "newsroom.completed", `${queue.length} story package(s) processed; publication remains a separate human action.`);
   await save();
+}
+
+/** Why a checked story still waits for James under the automatic publishing setting, or null when it may publish. */
+export function autoPublishHold(state: NewsroomState, story: Story): string | null {
+  if (story.mode !== "live" || story.status !== "waiting_approval" || !story.draft) return "not ready";
+  if (!story.draft.assessorReview) return "Written without the checking desk. Needs your read before it goes out.";
+  if (story.editorialTone === "B") return "Critical of a named person or organisation. Check it before it goes out.";
+  // Judge the words readers will see. Racing source pages often mention punters or odds in passing.
+  const published = [story.draft.headline, story.draft.deck, ...story.draft.sentences.map(sentence => sentence.text)].filter(Boolean).join(" ");
+  if (isWagering(published)) return "Mentions betting or odds. Gambling rules require your OK.";
+  if (story.correctionOf) return "Correction to an earlier article. Check the wording.";
+  if (checks(state, story, false).some(c => c.status === "blocked")) return "A pre-publication check is still blocked.";
+  return null;
+}
+
+/**
+ * James's standing instruction (automatic publishing): stories that completed research, writing and an
+ * independent checking desk publish without a manual click, except adverse, wagering and correction
+ * stories, which still wait for him. The approval record says it was made under that standing instruction.
+ */
+export function autoPublishReady(state: NewsroomState): number {
+  let published = 0;
+  for (const story of state.stories) {
+    if (autoPublishHold(state, story) !== null) continue;
+    try {
+      decideStory(state, story.id, "approve", "Published automatically under James's standing instruction: the checking desk passed every paragraph against the archived sources.", true);
+      published++;
+    } catch (error) {
+      audit(state, "autopublish.skipped", error instanceof Error ? error.message : "Automatic publication was not possible.", story.id);
+    }
+  }
+  return published;
 }
 
 export function decideStory(state: NewsroomState, storyId: string, decision: "approve" | "reject" | "send_back", note: string, wageringAcknowledged: boolean): void {
@@ -896,7 +937,7 @@ export function decideStory(state: NewsroomState, storyId: string, decision: "ap
   story.approvals.push({ id: stableId("approval", `${story.id}|${story.approvals.length}|${decision}`), decision, note: note.slice(0, 3000), actor: "James", draftHash: story.draft?.hash ?? null, wageringAcknowledged, createdAt });
   audit(state, `approval.${decision}`, note || `James selected ${decision}.`, story.id);
   if (decision === "approve" && story.draft) {
-    state.publications.push({ id: stableId("publication", `${story.id}|${story.draft.hash}`), storyId: story.id, mode: story.mode, public: story.mode === "live", draftHash: story.draft.hash, draft: structuredClone(story.draft), approvedBy: "James", approvedAt: createdAt, publishedAt: createdAt, status: "published", access: story.draft.access ?? "members", ...(story.correctionOf ? { correctionOf: story.correctionOf, correctionReason: story.correctionReason } : {}) });
+    state.publications.push({ id: stableId("publication", `${story.id}|${story.draft.hash}`), storyId: story.id, mode: story.mode, public: story.mode === "live", draftHash: story.draft.hash, draft: structuredClone(story.draft), approvedBy: "James", approvedAt: createdAt, publishedAt: createdAt, status: "published", access: story.draft.access ?? "public", ...(story.correctionOf ? { correctionOf: story.correctionOf, correctionReason: story.correctionReason } : {}) });
     transition(state, story, "published", story.mode === "demo" ? "Private demo publication simulated after James's approval." : "Exact approved article snapshot published after James's approval.");
   } else if (decision === "reject") transition(state, story, "rejected", "James rejected this package.");
   else if (decision === "send_back") {

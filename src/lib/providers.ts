@@ -138,7 +138,7 @@ async function oidcCredential(resolveToken: () => Promise<string>): Promise<stri
  * 75 seconds after preflight. Keep dispatch serial and below that observed boundary;
  * preflight shares the same allowance.
  */
-export const GATEWAY_PACING = { maxConcurrent: 1, minIntervalMs: 30_000, maxRetries: 1, maxBackoffMs: 4_000, breakerMs: 120_000 } as const;
+export const GATEWAY_PACING = { maxConcurrent: 1, minIntervalMs: 12_000, maxRetries: 1, maxBackoffMs: 4_000, breakerMs: 120_000 } as const;
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -211,7 +211,7 @@ class GatewayProvider implements ResearchProvider {
         response = await this.transport("https://ai-gateway.vercel.sh/v1/chat/completions", {
           method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
           // Queueing behind the shared pacer is not provider response time.
-          signal: AbortSignal.timeout(14_000), redirect: "error", cache: "no-store",
+          signal: AbortSignal.timeout(45_000), redirect: "error", cache: "no-store",
           body: payload,
         });
       } finally { this.release(); }

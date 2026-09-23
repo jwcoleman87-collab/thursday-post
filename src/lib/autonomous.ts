@@ -168,6 +168,10 @@ export async function finishAutonomousStory(state:NewsroomState,story:Story,prov
     if(error instanceof Error&&['GatewayCapacityError','GatewayAccessError'].includes(error.name)){
       audit(state,'autonomy.stage_deferred',`Phase ${p.phase} is checkpointed; provider allowance or cooldown prevents another call.`,story.id);await save();throw error;
     }
+    // A slow or briefly unavailable model is not an editorial verdict. Do not spend one of the
+    // two revision attempts on it; the saved phase resumes on the next scheduled run.
+    const transient=error instanceof Error&&(['TimeoutError','AbortError'].includes(error.name)||/timed out/i.test(error.message)||(error.name==='GatewayAccessError'&&[429,500,502,503,504].includes((error as {status?:number}).status??0)));
+    if(transient){audit(state,'autonomy.stage_deferred',`Phase ${p.phase} is checkpointed after a temporary model delay; it resumes on the next run.`,story.id);await save();return;}
     reject(state,story,p,['The structured editorial check or evidence binding did not validate. No unchecked draft was accepted.']);await save();
   }
 }

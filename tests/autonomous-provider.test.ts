@@ -44,10 +44,10 @@ test('the scheduled startRun path completes research-to-PE handoff, persists the
   const research=async()=>({findings:[{text:passage,kind:'record_statement' as const,quote:passage,sourceIds:[source.id],contradictorySourceIds:[],questions:[],confidence:'high' as const}]});
   await runNewsroom(state,{mode:'live',items:[source],maxRounds:1,maxResearchTasks:6},{research});
   const story=state.stories[0];addGap(state,story,'Could this also cover the founders?',2,true,'editorial-Could this also cover the founders?');story.status='blocked';
-  await transact(data=>{data.state=state;data.inbox=[];data.sources=[];delete data.lease;});
+  await transact(data=>{data.state=state;data.inbox=[];data.sources=[];delete data.lease;data.autoPublish=false;});
   let writers=0,checkers=0;
   await startRun('live',{collect:async()=>({items:[],errors:[]}),createProvider:options=>{
-   assert.equal(options?.maxRequests,4);
+   assert.equal(options?.maxRequests,10);
    return {research,usage:[],preflight:async()=>{},composeArticle:async()=>{writers++;return article;},reviewArticle:async input=>{checkers++;return {fields:[0,1].map(index=>({index,supported:true,complete:true,reason:'Archive supports attributed wording.'})),datesAppropriate:true,editorialTone:'N',gaps:input.gaps.map(g=>({gapId:g.id,outcome:'optional',rationale:'The checked article asserts nothing about founders or their background.',evidence})),research:[],summary:'The independent PE checked every field against the archived statement, source date and publication context.'};}};
   }});
   await closeStore();const reopened=await readStore();assert.equal(writers,1);assert.equal(checkers,1);assert.equal(reopened.state.stories[0].status,'waiting_approval');assert.equal(reopened.state.publications.length,0);
