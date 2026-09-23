@@ -48,7 +48,9 @@ const draftSchema = z.object({
  * present in the supplied excerpt is still rejected.
  */
 const QUOTE_FOLD: Record<string, string> = {
-  "\u2018": "'", "\u2019": "'", "\u201A": "'", "\u201B": "'", "\u02BC": "'", "\u00B4": "'", "\u0060": "'",
+  // Single and double quotation marks are interchangeable when LOCATING a passage: writers often
+  // render a source's “double” quotes as 'single' ones. The stored evidence is still the verbatim slice.
+  "'": '"', "\u2018": '"', "\u2019": '"', "\u201A": '"', "\u201B": '"', "\u02BC": '"', "\u00B4": '"', "\u0060": '"',
   "\u201C": '"', "\u201D": '"', "\u201E": '"', "\u201F": '"', "\u00AB": '"', "\u00BB": '"',
   "\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2013": "-", "\u2014": "-", "\u2015": "-", "\u2212": "-",
 };

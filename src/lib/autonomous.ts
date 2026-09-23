@@ -10,8 +10,12 @@ const hash=(input:unknown)=>createHash('sha256').update(JSON.stringify(input)).d
 export function autonomousRetryable(state:NewsroomState,story:Story):boolean {
   if(story.mode!=='live'||['published','rejected','waiting_approval'].includes(story.status))return false;
   const p=story.autonomy;
-  return !p||p.phase!=='held'||p.basis!==evidenceFingerprint(state,story)||p.draftBasis!==(story.draft?.hash??'')||p.issueDate!==nextIssueDate();
+  return !p||p.phase!=='held'||heldLongEnough(p)||p.basis!==evidenceFingerprint(state,story)||p.draftBasis!==(story.draft?.hash??'')||p.issueDate!==nextIssueDate();
 }
+
+/** A held story gets a fresh pair of writer attempts after a rest, so one bad day never shelves it for good. */
+export const HELD_RETRY_MS=3*60*60*1000;
+const heldLongEnough=(p:AutonomousProgress,now=Date.now())=>p.phase==='held'&&now-Date.parse(p.updatedAt)>=HELD_RETRY_MS;
 
 function progress(state:NewsroomState,story:Story):AutonomousProgress {
   const basis=evidenceFingerprint(state,story),draftBasis=story.draft?.hash??'',issueDate=nextIssueDate();
@@ -19,6 +23,10 @@ function progress(state:NewsroomState,story:Story):AutonomousProgress {
     const old=story.autonomy;
     if(old)audit(state,'autonomy.version_changed',JSON.stringify({phase:old.phase,basis:old.basis,draftBasis:old.draftBasis,issueDate:old.issueDate}),story.id);
     story.autonomy={phase:'research',issueDate,basis,draftBasis,attempts:0,feedback:[],reviewerId:(story.peAgentId%4+1),updatedAt:now()};
+  }
+  if(heldLongEnough(story.autonomy)){
+    audit(state,'autonomy.retry_after_hold',JSON.stringify({previousFeedback:story.autonomy.feedback}),story.id);
+    story.autonomy={...story.autonomy,phase:'compose',attempts:0,updatedAt:now()};delete story.autonomy.proposal;delete story.autonomy.review;
   }
   return story.autonomy;
 }
