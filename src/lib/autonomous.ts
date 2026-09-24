@@ -176,7 +176,11 @@ export async function finishAutonomousStory(state:NewsroomState,story:Story,prov
       if(!gap||gap.status!=='open'||!agentFollowupGap(candidate,gap))continue;
       const bindings=scopeAssessmentContext(planned,story.id,gap.id);
       if(!bindings.eligible)continue;
-      const claimIds=candidate.draft!.sentences.flatMap(s=>s.claimIds).filter(id=>candidate.claims.find(c=>c.id===id)?.evidence.some(e=>decision.evidence.some(r=>r.sourceId===e.sourceId&&r.quote===e.quote)));
+      const draftClaims=candidate.draft!.sentences.flatMap(s=>s.claimIds);
+      const cited=draftClaims.filter(id=>candidate.claims.find(c=>c.id===id)?.evidence.some(e=>decision.evidence.some(r=>r.sourceId===e.sourceId&&r.quote===e.quote)));
+      // "Optional" means the checked article asserts nothing that depends on this extra angle. When the
+      // checker names no passage, the scope decision is bound to the article's own sourced claims.
+      const claimIds=cited.length?cited:draftClaims;
       if(!claimIds.length)continue;
       recordScopeAssessment(planned,story.id,gap.id,{rationale:`Independent PE Agent ${p.reviewerId}: ${decision.rationale}`,claimIds:[...new Set(claimIds)],expectedDraftHash:bindings.expectedDraftHash,expectedEvidenceFingerprint:bindings.expectedEvidenceFingerprint},true);
     }
