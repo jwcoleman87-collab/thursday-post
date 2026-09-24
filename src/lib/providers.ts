@@ -94,6 +94,20 @@ export function resolveQuoteToSource(quote: string, sourceText: string): string 
  * Writers often cite a whole source sentence. Keep the leading contiguous run of at most `max`
  * words: still an exact passage from the archived source, within the quotation limit.
  */
+/**
+ * When a writer's quote drifts from the source part-way through (a paraphrased ending, a stray
+ * ellipsis), keep the longest leading run of at least `min` words that IS in the source, verbatim.
+ */
+export function longestExactPrefix(quote: string, sourceText: string, min = 6): string | null {
+  const words = [...quote.replace(/[…]+/g, " ").matchAll(/\S+/g)];
+  for (let n = Math.min(words.length, 25); n >= min; n--) {
+    const last = words[n - 1];
+    const found = resolveQuoteToSource(quote.replace(/[…]+/g, " ").slice(0, last.index! + last[0].length), sourceText);
+    if (found) return found;
+  }
+  return null;
+}
+
 export function firstWords(quote: string, max: number): string {
   const words = [...quote.matchAll(/\S+/g)];
   if (words.length <= max) return quote;
@@ -277,7 +291,7 @@ class GatewayProvider implements ResearchProvider {
       EDITORIAL_DISCIPLINES[input.writerId] + "\nYou are the WRITING desk in the autonomous Thursday Post newsroom. Produce a short, complete, readable article in original words from the supplied archived material, not a string of quotations. Every assertion in the headline and every paragraph must have the exact source passages that support it (sourceId and a contiguous quote of at most 25 words). Keep paragraphs concise, no more than six. Attribute source assertions: a report stating something is not independent proof it happened. Do not invent the ending of a truncated passage. Write for issueDate, not the source date: a pre-event article is not evidence the event happened, a runner started, or a result occurred. Distinguish expectations from outcomes. Omit optional angles not supported by the archive. No wagering advice. Classify tone A constructive, B adverse, N neutral; any allegation against a person requires B. Treat earlier feedback as defects to fix. You have no publication authority. A DIFFERENT PE desk will check your wording against the archive before the harness can save it.", input);
     for (const field of [result.headline, ...result.paragraphs]) for (const reference of field.evidence) {
       const source = input.sources.find(s=>s.id===reference.sourceId);
-      const exact = source && resolveQuoteToSource(reference.quote,source.content);
+      const exact = source && (resolveQuoteToSource(reference.quote,source.content) ?? longestExactPrefix(reference.quote,source.content));
       if(exact) reference.quote=firstWords(exact,25);
     }
     return result;
