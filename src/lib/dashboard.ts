@@ -42,7 +42,7 @@ function stageOf(state: NewsroomState, story: Story): Omit<InProgressItem, 'stor
   if (phase === 'review') return { stage: 'Being checked', step: 4, detail: 'A second agent is checking every sentence against the sources.', stuck: false };
   if (phase === 'held') {
     const why = story.autonomy?.feedback[0];
-    return { stage: 'Stuck', step: 4, detail: `The checker could not back this story up after two tries${why ? `: “${why.slice(0, 160)}”` : '.'} The agents try again automatically in about 3 hours.`, stuck: true };
+    return { stage: 'Stuck', step: 4, detail: `The checker could not back this story up after two tries${why ? `: “${why.slice(0, 160)}”` : '.'} The agents try again automatically within the hour.`, stuck: true };
   }
   if (story.error) return { stage: 'Stuck', step: 2, detail: plainError(story.error), stuck: true };
   if (openQuestions) return { stage: 'Researching', step: 2, detail: `${openQuestions} question${openQuestions === 1 ? '' : 's'} still being researched. Continues on the next run.`, stuck: false };

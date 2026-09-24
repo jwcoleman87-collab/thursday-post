@@ -14,7 +14,7 @@ export function autonomousRetryable(state:NewsroomState,story:Story):boolean {
 }
 
 /** A held story gets a fresh pair of writer attempts after a rest, so one bad day never shelves it for good. */
-export const HELD_RETRY_MS=3*60*60*1000;
+export const HELD_RETRY_MS=60*60*1000;
 const heldLongEnough=(p:AutonomousProgress,now=Date.now())=>p.phase==='held'&&now-Date.parse(p.updatedAt)>=HELD_RETRY_MS;
 
 function progress(state:NewsroomState,story:Story):AutonomousProgress {

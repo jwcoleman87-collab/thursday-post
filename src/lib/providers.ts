@@ -90,6 +90,17 @@ export function resolveQuoteToSource(quote: string, sourceText: string): string 
   return verbatim.length && verbatim.length <= 320 ? verbatim : null;
 }
 
+/**
+ * Writers often cite a whole source sentence. Keep the leading contiguous run of at most `max`
+ * words: still an exact passage from the archived source, within the quotation limit.
+ */
+export function firstWords(quote: string, max: number): string {
+  const words = [...quote.matchAll(/\S+/g)];
+  if (words.length <= max) return quote;
+  const last = words[max - 1];
+  return quote.slice(0, last.index! + last[0].length);
+}
+
 export interface GatewayUsage { model: string; stage: "preflight" | "research" | "editorial"; inputTokens: number | null; outputTokens: number | null }
 
 /** Public operational messages use a fixed vocabulary; provider bodies may contain sensitive data. */
@@ -267,7 +278,7 @@ class GatewayProvider implements ResearchProvider {
     for (const field of [result.headline, ...result.paragraphs]) for (const reference of field.evidence) {
       const source = input.sources.find(s=>s.id===reference.sourceId);
       const exact = source && resolveQuoteToSource(reference.quote,source.content);
-      if(exact) reference.quote=exact;
+      if(exact) reference.quote=firstWords(exact,25);
     }
     return result;
   }
@@ -278,7 +289,7 @@ class GatewayProvider implements ResearchProvider {
     for (const gap of result.gaps) for (const reference of gap.evidence) {
       const source = input.sources.find(s=>s.id===reference.sourceId);
       const exact = source && resolveQuoteToSource(reference.quote,source.content);
-      if(exact) reference.quote=exact;
+      if(exact) reference.quote=firstWords(exact,25);
     }
     return result;
   }
