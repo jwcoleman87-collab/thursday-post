@@ -87,5 +87,13 @@ export function errorResponse(error:unknown) {
   if(error instanceof Error && ['ZodError','SyntaxError','WebhookVerificationError'].includes(error.name))return Response.json({error:'Invalid request or webhook signature.'},{status:400});
   if(error instanceof Error && error.name==='AdapterConfigurationError')return Response.json({error:error.message},{status:503});
   // Provider failures can contain response content; keep credentials/source material out of public errors.
+  // The owner-only server log still needs the cause, or every outage reads as a bare HTTP 500.
+  console.error('Unhandled request failure',describeFailure(error));
   return Response.json({error:'The operation could not complete. Check the service configuration and try again.'},{status:500});
+}
+/** Name, code and a bounded message: enough to diagnose (e.g. a database refusal) without dumping payloads. */
+export function describeFailure(error:unknown) {
+  if(!(error instanceof Error))return {name:typeof error,message:String(error).slice(0,300)};
+  const code=(error as {code?:unknown}).code;
+  return {name:error.name,...(typeof code==='string'||typeof code==='number'?{code}:{}),message:error.message.slice(0,500)};
 }
