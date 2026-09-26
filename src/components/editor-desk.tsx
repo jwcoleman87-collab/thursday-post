@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ThursdayMark } from "@/components/publication-brand";
 import type { Dashboard, NeedsYouItem } from "@/lib/dashboard";
+import { deskRefreshDelay } from "@/lib/desk-refresh";
 
 const STEPS = ["Lead", "Research", "Write", "Check"];
 
@@ -98,12 +99,28 @@ export default function EditorDesk() {
     load();
   }, [load]);
 
-  // Refresh quietly: every 15 seconds while agents are working, otherwise every minute.
+  // Track whether this tab is on screen; a hidden tab must not keep reading the database.
+  const [visible, setVisible] = useState(true);
+  const wasVisible = useRef(true);
+  useEffect(() => {
+    const update = () => setVisible(document.visibilityState === "visible");
+    update();
+    document.addEventListener("visibilitychange", update);
+    return () => document.removeEventListener("visibilitychange", update);
+  }, []);
+  // Coming back to the tab refreshes once, so the desk is never stale when you look at it.
+  useEffect(() => {
+    if (visible && !wasVisible.current) load();
+    wasVisible.current = visible;
+  }, [visible, load]);
+
+  // Refresh quietly while visible: every 15 seconds while agents are working, otherwise every minute.
   useEffect(() => {
     clearTimeout(timer.current);
-    timer.current = setTimeout(load, data?.settings.running || busy === "run" ? 15_000 : 60_000);
+    const delay = deskRefreshDelay({ visible, running: Boolean(data?.settings.running) || busy === "run" });
+    if (delay !== null) timer.current = setTimeout(load, delay);
     return () => clearTimeout(timer.current);
-  }, [data, busy, load]);
+  }, [data, busy, load, visible]);
 
   const act = async (key: string, body: Record<string, unknown>, done: string) => {
     setBusy(key);
