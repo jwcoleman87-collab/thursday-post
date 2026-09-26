@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { LicensedImage, Publication } from './domain';
-import { imageRightsCleared, normaliseLicenceCode } from './image-rights';
+import { imageRightsCleared, licensedImageSchema, normaliseLicenceCode } from './image-rights';
 
 /**
  * The picture desk looks for openly licensed photographs of the story's own subjects: the horse,
@@ -18,6 +18,8 @@ const MIN_WIDTH = 800;
 const RACING_WORDS = /\b(horses?|racehorses?|racing|races?|raced|jockeys?|trainers?|racecourses?|race ?courses?|turf|stakes|cups?|thoroughbreds?|mounting yard|geldings?|mares?|colts?|fill(?:y|ies)|stallions?|studs?|derby|oaks|plate|handicap|meetings?|carnivals?)\b/i;
 /** A venue picture must show the racecourse, not a station, a statue of some other horse or a sign. */
 const NOT_A_VENUE_PICTURE = /\b(railway|station|train|tram|bus|statue|sculpture|memorial|plaque|sign|signage|map|aerial view of the city)\b/i;
+/** Several racecourse names exist abroad (Scone and Perth in Scotland, Ascot in England). */
+const AUSTRALIAN_PLACE = /(?<![A-Za-z])(Australia|Australian|New South Wales|NSW|N\.S\.W\.|Victoria|Queensland|Qld|South Australia|Western Australia|Tasmania|Northern Territory|Sydney|Melbourne|Brisbane|Adelaide|Hobart|Darwin|Canberra|Hunter Region|Upper Hunter|Mid North Coast|Northern Rivers|Gold Coast|Sunshine Coast|outback)(?![A-Za-z])/i;
 /** Catalogue records from museum uploads are not captions. */
 const CATALOGUE_TEXT = /\b(format|rights info|repository|accession|call number|identifier|glass plate negative)\s*:/i;
 const VENUE_WORDS = /\b(racecourse|race ?course|racetrack|race track|turf club|racing club|jockey club|grandstand|mounting yard|straight|home turn|track)\b/i;
@@ -53,8 +55,8 @@ export function pictureTerms(text: { headline: string; paragraphs: string[] }): 
   return [...found.values()].sort((a, b) => b.weight - a.weight || (a.kind === 'subject' ? -1 : 1)).slice(0, MAX_TERMS);
 }
 
-export function commonsSearchUrl(term: PictureTerm): string {
-  const query = term.kind === 'venue' ? `"${term.term}" racecourse` : `"${term.term}" (horse OR racing OR jockey OR trainer OR racecourse)`;
+export function commonsSearchUrl(term: PictureTerm, byCategory = false): string {
+  const query = byCategory ? `incategory:"${term.term}"` : term.kind === 'venue' ? `"${term.term}" racecourse` : `"${term.term}" (horse OR racing OR jockey OR trainer OR racecourse)`;
   const params = new URLSearchParams({
     action: 'query', format: 'json', formatversion: '2', origin: '*',
     generator: 'search', gsrnamespace: '6', gsrlimit: '10', gsrsearch: `${query} filetype:bitmap`,
@@ -93,6 +95,7 @@ export function commonsCandidates(response: unknown, term: PictureTerm, addedAt:
     if (term.kind === 'subject' && !RACING_WORDS.test(`${haystack} ${categories}`)) { reject('not about racing'); continue; }
     if (term.kind === 'venue' && !VENUE_WORDS.test(`${haystack} ${categories}`) && !RACING_WORDS.test(`${haystack} ${categories}`)) { reject('not the racecourse'); continue; }
     if (term.kind === 'venue' && NOT_A_VENUE_PICTURE.test(haystack)) { reject('shows a station, statue or sign, not the racecourse'); continue; }
+    if (term.kind === 'venue' && !AUSTRALIAN_PLACE.test(`${haystack} ${categories}`)) { reject('not in Australia'); continue; }
     const code = normaliseLicenceCode(meta(extmetadata, 'License') || meta(extmetadata, 'LicenseShortName'));
     const credit = (meta(extmetadata, 'Artist') || meta(extmetadata, 'Credit')).slice(0, 200);
     if (!credit) { reject('no named author'); continue; }
@@ -118,7 +121,9 @@ export function commonsCandidates(response: unknown, term: PictureTerm, addedAt:
       matchedTerm: term.term,
       addedAt, addedBy: 'picture-desk',
     };
-    if (imageRightsCleared(image)) { images.push(image); log?.push(`  ✓ ${page.title} (${image.licence.name}, ${credit})`); } else reject(`licence not open (${code || 'none'})`);
+    if (imageRightsCleared(image)) { images.push(image); log?.push(`  ✓ ${page.title} (${image.licence.name}, ${credit})`); continue; }
+    const problem = licensedImageSchema.safeParse(image);
+    reject(problem.success ? `licence not open (${code || 'none'})` : `provenance incomplete (${problem.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ')})`);
   }
   return images;
 }
@@ -134,13 +139,18 @@ export async function findLicensedImages(article: { headline: string; paragraphs
     if (chosen.length >= MAX_IMAGES_PER_STORY) break;
     if (options.deadline && Date.now() > options.deadline - 3_000) break;
     try {
-      const response = await request(commonsSearchUrl(term), { headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' }, signal: AbortSignal.timeout(8_000), redirect: 'error', cache: 'no-store' });
-      if (!response.ok) { options.log?.push(`${term.term} (${term.kind}): search failed, HTTP ${response.status}`); continue; }
-      const body = await response.json();
-      options.log?.push(`${term.term} (${term.kind}): ${((body as { query?: { pages?: unknown[] } })?.query?.pages ?? []).length} files returned`);
-      for (const image of commonsCandidates(body, term, addedAt, options.log)) {
+      // A subject's Commons category often holds photographs whose descriptions never say "racing".
+      for (const byCategory of term.kind === 'subject' ? [false, true] : [false]) {
         if (chosen.length >= MAX_IMAGES_PER_STORY) break;
-        if (!chosen.some(item => item.id === image.id)) chosen.push(image);
+        const response = await request(commonsSearchUrl(term, byCategory), { headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' }, signal: AbortSignal.timeout(8_000), redirect: 'error', cache: 'no-store' });
+        const label = `${term.term} (${term.kind}${byCategory ? ', category' : ''})`;
+        if (!response.ok) { options.log?.push(`${label}: search failed, HTTP ${response.status}`); continue; }
+        const body = await response.json();
+        options.log?.push(`${label}: ${((body as { query?: { pages?: unknown[] } })?.query?.pages ?? []).length} files returned`);
+        for (const image of commonsCandidates(body, term, addedAt, options.log)) {
+          if (chosen.length >= MAX_IMAGES_PER_STORY) break;
+          if (!chosen.some(item => item.id === image.id)) chosen.push(image);
+        }
       }
     } catch (error) { options.log?.push(`${term.term} (${term.kind}): search failed (${error instanceof Error ? error.name : 'error'})`); /* The story keeps its typographic treatment. */ }
   }
