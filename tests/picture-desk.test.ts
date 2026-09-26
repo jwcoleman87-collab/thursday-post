@@ -51,7 +51,8 @@ test('only openly licensed, story-specific photographs are accepted, with full p
   assert.equal(image.credit, 'Anna Rider');
   assert.equal(image.licence.code, 'cc-by-sa-4.0');
   assert.match(image.caption, /Wild Monarch returns to scale/);
-  assert.match(image.caption, /2026/);
+  // Commons upload and scan dates are not reliable capture dates, so no year is added.
+  assert.equal(image.caption, 'Racehorse Wild Monarch returns to scale after winning a maiden at Taree.');
   assert.equal(image.sourcePage, 'https://commons.wikimedia.org/wiki/File:Wild_Monarch_winning_at_Taree_2026.jpg');
   assert.ok(imageRightsCleared(image));
   assert.equal(creditLine(image), 'Photo: Anna Rider · CC BY-SA 4.0 via Wikimedia Commons');

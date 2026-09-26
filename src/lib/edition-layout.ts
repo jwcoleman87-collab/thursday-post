@@ -72,7 +72,9 @@ function block(item: Ranked, role: EditionBlock['role'], imagesLeft: { count: nu
   const index = item.images.findIndex(free);
   if (role !== 'brief' && index >= 0 && imagesLeft.count > 0) {
     result.imageIndex = index; take(item.images[index]);
-    const inset = role === 'lead' ? item.images.findIndex((image, other) => other !== index && free(image)) : -1;
+    // A second picture must add something: a different photographer or a different subject.
+    const main = item.images[index];
+    const inset = role === 'lead' ? item.images.findIndex((image, other) => other !== index && free(image) && (image.credit !== main.credit || image.matchedTerm !== main.matchedTerm)) : -1;
     if (inset >= 0 && imagesLeft.count > 0) { result.insetIndex = inset; take(item.images[inset]); }
   }
   if (role === 'lead' || role === 'feature') { const quote = pullQuoteFor(item.article.paragraphs); if (quote) result.pullQuote = quote; }

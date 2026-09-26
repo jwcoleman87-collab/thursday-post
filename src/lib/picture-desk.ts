@@ -66,39 +66,40 @@ export function commonsSearchUrl(term: PictureTerm): string {
 
 const stripHtml = (value: unknown) => typeof value === 'string' ? value.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/\s+/g, ' ').trim() : '';
 const meta = (extmetadata: Record<string, { value?: unknown }> | undefined, key: string) => stripHtml(extmetadata?.[key]?.value);
-const titleText = (title: string) => title.replace(/^File:/, '').replace(/\.[a-z0-9]{2,4}$/i, '').replace(/[_]+/g, ' ').trim();
+// Flickr and archive upload numbers in brackets are not part of what the picture shows.
+const titleText = (title: string) => title.replace(/^File:/, '').replace(/\.[a-z0-9]{2,4}$/i, '').replace(/[_]+/g, ' ').replace(/\s*\(\d{6,}\)/g, '').trim();
 const containsTerm = (haystack: string, term: string) => new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')}\\b`, 'i').test(haystack);
 
 interface CommonsPage { title?: string; index?: number; imageinfo?: { url?: string; thumburl?: string; thumbwidth?: number; thumbheight?: number; width?: number; height?: number; mime?: string; descriptionurl?: string; extmetadata?: Record<string, { value?: unknown }> }[] }
 
 /** Turn one Commons search response into pictures that are cleared to print for this term. */
-export function commonsCandidates(response: unknown, term: PictureTerm, addedAt: string): LicensedImage[] {
+export function commonsCandidates(response: unknown, term: PictureTerm, addedAt: string, log?: string[]): LicensedImage[] {
   const pages = ((response as { query?: { pages?: CommonsPage[] } })?.query?.pages ?? []).slice().sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
   const images: LicensedImage[] = [];
   for (const page of pages) {
     const info = page.imageinfo?.[0];
-    if (!page.title || !info?.descriptionurl) continue;
+    const reject = (reason: string) => { log?.push(`  ✗ ${page.title ?? 'untitled'}: ${reason}`); };
+    if (!page.title || !info?.descriptionurl) { reject('no file information'); continue; }
     const extmetadata = info.extmetadata;
     const title = titleText(page.title);
     const description = meta(extmetadata, 'ImageDescription') || meta(extmetadata, 'ObjectName');
     const categories = meta(extmetadata, 'Categories');
     const haystack = `${title} ${description}`;
-    if (!/^image\/(jpeg|webp)$/.test(info.mime ?? '')) continue;
-    if ((info.width ?? 0) < MIN_WIDTH) continue;
-    if (meta(extmetadata, 'NonFree').toLowerCase() === 'true') continue;
-    if (REJECT_TITLE.test(title) || AI_GENERATED.test(`${haystack} ${categories}`)) continue;
-    if (!containsTerm(haystack, term.term)) continue;
-    if (term.kind === 'subject' && !RACING_WORDS.test(`${haystack} ${categories}`)) continue;
-    if (term.kind === 'venue' && !VENUE_WORDS.test(`${haystack} ${categories}`) && !RACING_WORDS.test(`${haystack} ${categories}`)) continue;
-    if (term.kind === 'venue' && NOT_A_VENUE_PICTURE.test(haystack)) continue;
+    if (!/^image\/(jpeg|webp)$/.test(info.mime ?? '')) { reject(`not a photograph (${info.mime})`); continue; }
+    if ((info.width ?? 0) < MIN_WIDTH) { reject(`too small (${info.width}px)`); continue; }
+    if (meta(extmetadata, 'NonFree').toLowerCase() === 'true') { reject('non-free'); continue; }
+    if (REJECT_TITLE.test(title) || AI_GENERATED.test(`${haystack} ${categories}`)) { reject('logo, diagram or AI-generated'); continue; }
+    if (!containsTerm(haystack, term.term)) { reject('does not name the subject'); continue; }
+    if (term.kind === 'subject' && !RACING_WORDS.test(`${haystack} ${categories}`)) { reject('not about racing'); continue; }
+    if (term.kind === 'venue' && !VENUE_WORDS.test(`${haystack} ${categories}`) && !RACING_WORDS.test(`${haystack} ${categories}`)) { reject('not the racecourse'); continue; }
+    if (term.kind === 'venue' && NOT_A_VENUE_PICTURE.test(haystack)) { reject('shows a station, statue or sign, not the racecourse'); continue; }
     const code = normaliseLicenceCode(meta(extmetadata, 'License') || meta(extmetadata, 'LicenseShortName'));
     const credit = (meta(extmetadata, 'Artist') || meta(extmetadata, 'Credit')).slice(0, 200);
-    if (!credit) continue;
+    if (!credit) { reject('no named author'); continue; }
     const url = info.thumburl ?? info.url;
     const width = info.thumburl ? info.thumbwidth : info.width;
     const height = info.thumburl ? info.thumbheight : info.height;
-    if (!url || !width || !height) continue;
-    const taken = meta(extmetadata, 'DateTimeOriginal').match(/\b(1[89]|20)\d{2}\b/)?.[0];
+    if (!url || !width || !height) { reject('no usable image size'); continue; }
     // Wiki link prefixes ("w:") and museum catalogue records are cleaned out; the file title stands in when needed.
     const cleaned = description.replace(/\bw:/g, '').replace(/\s+([,.;])/g, '$1');
     const firstSentence = cleaned.split(/(?<=\.)\s/)[0] ?? '';
@@ -107,7 +108,8 @@ export function commonsCandidates(response: unknown, term: PictureTerm, addedAt:
       id: `commons-${createHash('sha256').update(info.descriptionurl).digest('hex').slice(0, 20)}`,
       url, width, height,
       alt: shows.slice(0, 280),
-      caption: taken && !shows.includes(taken) ? `${shows} (${taken}).` : `${shows}.`,
+      // No date is added: upload and scan dates on Commons are often not when the picture was taken.
+      caption: `${shows}.`,
       credit,
       licence: { code, name: meta(extmetadata, 'LicenseShortName') || code, ...(meta(extmetadata, 'LicenseUrl').startsWith('http') ? { url: meta(extmetadata, 'LicenseUrl') } : {}) },
       origin: 'wikimedia_commons',
@@ -116,7 +118,7 @@ export function commonsCandidates(response: unknown, term: PictureTerm, addedAt:
       matchedTerm: term.term,
       addedAt, addedBy: 'picture-desk',
     };
-    if (imageRightsCleared(image)) images.push(image);
+    if (imageRightsCleared(image)) { images.push(image); log?.push(`  ✓ ${page.title} (${image.licence.name}, ${credit})`); } else reject(`licence not open (${code || 'none'})`);
   }
   return images;
 }
@@ -124,7 +126,7 @@ export function commonsCandidates(response: unknown, term: PictureTerm, addedAt:
 export type PictureFetch = (url: string, init: RequestInit) => Promise<Response>;
 
 /** Search for up to two cleared pictures of this story's own subjects; subjects before venues. */
-export async function findLicensedImages(article: { headline: string; paragraphs: string[] }, options: { fetch?: PictureFetch; deadline?: number; now?: string; terms?: PictureTerm[] } = {}): Promise<LicensedImage[]> {
+export async function findLicensedImages(article: { headline: string; paragraphs: string[] }, options: { fetch?: PictureFetch; deadline?: number; now?: string; terms?: PictureTerm[]; log?: string[] } = {}): Promise<LicensedImage[]> {
   const request = options.fetch ?? fetch;
   const addedAt = options.now ?? new Date().toISOString();
   const chosen: LicensedImage[] = [];
@@ -133,12 +135,14 @@ export async function findLicensedImages(article: { headline: string; paragraphs
     if (options.deadline && Date.now() > options.deadline - 3_000) break;
     try {
       const response = await request(commonsSearchUrl(term), { headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' }, signal: AbortSignal.timeout(8_000), redirect: 'error', cache: 'no-store' });
-      if (!response.ok) continue;
-      for (const image of commonsCandidates(await response.json(), term, addedAt)) {
+      if (!response.ok) { options.log?.push(`${term.term} (${term.kind}): search failed, HTTP ${response.status}`); continue; }
+      const body = await response.json();
+      options.log?.push(`${term.term} (${term.kind}): ${((body as { query?: { pages?: unknown[] } })?.query?.pages ?? []).length} files returned`);
+      for (const image of commonsCandidates(body, term, addedAt, options.log)) {
         if (chosen.length >= MAX_IMAGES_PER_STORY) break;
         if (!chosen.some(item => item.id === image.id)) chosen.push(image);
       }
-    } catch { /* A failed lookup leaves the story on its typographic treatment. */ }
+    } catch (error) { options.log?.push(`${term.term} (${term.kind}): search failed (${error instanceof Error ? error.name : 'error'})`); /* The story keeps its typographic treatment. */ }
   }
   return chosen;
 }
