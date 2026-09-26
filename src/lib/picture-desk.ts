@@ -24,7 +24,7 @@ const RACING_WORDS = /\b(horses?|racehorses?|horse racing|horse races?|racing (?
 /** A venue picture must show the racecourse, not a station, a statue of some other horse or a sign. */
 /** Pictures of something else that happened at the racecourse (a war camp, a concert) do not illustrate racing there. */
 const ANOTHER_EVENT = /\b(soldiers?|troops|army|military|battalion|expeditionary|war|camp|concert|festival|market|protest|evacuation)\b/i;
-const NOT_A_VENUE_PICTURE = /\b(railway|station|train|tram|bus|statue|sculpture|memorial|plaque|sign|signage|map|car ?park|underpass|aerial view of the city)\b/i;
+const NOT_A_VENUE_PICTURE = /\b(road|street|highway|railway|station|train|tram|bus|statue|sculpture|memorial|plaque|sign|signage|map|car ?park|underpass|aerial view of the city)\b/i;
 /** Several racecourse names exist abroad (Scone and Perth in Scotland, Ascot in England). */
 const AUSTRALIAN_PLACE = /(?<![A-Za-z])(Australia|Australian|New South Wales|NSW|N\.S\.W\.|Victoria|Queensland|Qld|South Australia|Western Australia|Tasmania|Northern Territory|Sydney|Melbourne|Brisbane|Adelaide|Hobart|Darwin|Canberra|Hunter Region|Upper Hunter|Mid North Coast|Northern Rivers|Gold Coast|Sunshine Coast|outback)(?![A-Za-z])/i;
 /** Catalogue records from museum uploads are not captions. */

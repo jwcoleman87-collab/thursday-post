@@ -177,3 +177,8 @@ test('a picture of another event at the racecourse does not illustrate racing th
   const soldiers = commonsCandidates(response([page('Expeditionary Forces World War I at Morphettville Racecourse.jpg', { ImageDescription: 'The soldiers are most likely from the 10th Infantry Battalion, exercising at Morphettville Racecourse, South Australia', License: 'pd', LicenseShortName: 'Public domain' })]), { term: 'Morphettville', kind: 'venue', weight: 2 }, '2026-09-26T00:00:00.000Z');
   assert.deepEqual(soldiers, []);
 });
+
+test('a street seen from the racecourse is not a picture of the racecourse', () => {
+  const road = commonsCandidates(response([page('Morphett Road S from racecourse.jpg', { ImageDescription: 'Morphett Road, Morphettville, looking south from the racecourse, South Australia' })]), { term: 'Morphettville', kind: 'venue', weight: 2 }, '2026-09-26T00:00:00.000Z');
+  assert.deepEqual(road, []);
+});
