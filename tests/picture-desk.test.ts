@@ -129,3 +129,25 @@ test('a picture pass writes once, marks stories checked, and never searches the 
   assert.equal(lookups, lookupsAfterFirst);
   assert.equal((await readStore()).revision, before + 1);
 });
+
+test('found on the live preview: stations, statues and catalogue records are not venue pictures or captions', () => {
+  const flemington = { term: 'Flemington', kind: 'venue' as const, weight: 2 };
+  const rejected = commonsCandidates(response([
+    page('Train at Flemington Racecourse railway station, Melbourne.jpg', { ImageDescription: 'w:Comeng (train) at w:Flemington Racecourse railway station, Melbourne.' }),
+    page('Makybe Diva statue at Flemington Racecourse.jpg', { ImageDescription: 'Statue of Makybe Diva at Flemington Racecourse' }),
+  ]), flemington, '2026-09-26T00:00:00.000Z');
+  assert.deepEqual(rejected, []);
+  const rosehill = commonsCandidates(response([
+    page('Rosehill Racecourse, N.S.W., Saddling Paddock.jpg', { ImageDescription: 'Format: Glass plate negative. Rights Info: No known restrictions on publication. Repository: Tyrrell Collection' }),
+  ]), { term: 'Rosehill', kind: 'venue', weight: 2 }, '2026-09-26T00:00:00.000Z');
+  assert.equal(rosehill.length, 1);
+  assert.match(rosehill[0].caption, /^Rosehill Racecourse, N\.S\.W\., Saddling Paddock/);
+  assert.doesNotMatch(rosehill[0].caption, /Format:|Repository/);
+});
+
+test('a statue of the story’s own horse is a fair subject picture, and plural racing words count', () => {
+  const statue = commonsCandidates(response([page('Makybe Diva statue.jpg', { ImageDescription: 'Statue of Makybe Diva at Flemington Racecourse' })]), { term: 'Makybe Diva', kind: 'subject', weight: 3 }, '2026-09-26T00:00:00.000Z');
+  assert.equal(statue.length, 1);
+  const pharLap = commonsCandidates(response([page('Phar Lap with his strapper.jpg', { ImageDescription: 'Phar Lap with his strapper Tommy Woodcock', Categories: 'Phar Lap|Racehorses from New Zealand' })]), { term: 'Phar Lap', kind: 'subject', weight: 3 }, '2026-09-26T00:00:00.000Z');
+  assert.equal(pharLap.length, 1);
+});

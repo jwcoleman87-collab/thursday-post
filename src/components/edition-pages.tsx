@@ -112,7 +112,7 @@ function Record({ article }: { article: PageArticle }) {
 function Story({ article, block, mode, page, panel }: { article: PageArticle; block: EditionBlock; mode: Mode; page: EditionPage; panel: boolean }) {
   const images = printableImages(article.images);
   const image = block.imageIndex !== undefined ? images[block.imageIndex] : undefined;
-  const inset = block.role === 'lead' && images.length > 1 ? images[1] : undefined;
+  const inset = block.insetIndex !== undefined ? images[block.insetIndex] : undefined;
   const id = block.teaser ? undefined : `story-${article.publicationId}`;
   const jumpTo = mode === 'edition' && block.teaser ? block.jumpTo : undefined;
   const label = block.continuedFrom ? `${kicker(article)} · Continued from page ${block.continuedFrom}` : kicker(article);

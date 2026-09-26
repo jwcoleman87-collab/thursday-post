@@ -62,9 +62,19 @@ function rank(articles: ComposableArticle[]): Ranked[] {
   }).sort((a, b) => b.weight - a.weight || a.article.publicationId.localeCompare(b.article.publicationId));
 }
 
-function block(item: Ranked, role: EditionBlock['role'], imagesLeft: { count: number }): EditionBlock {
-  const result: EditionBlock = { publicationId: item.article.publicationId, role };
-  if (role !== 'brief' && item.images.length && imagesLeft.count > 0) { result.imageIndex = 0; imagesLeft.count -= role === 'lead' && item.images.length > 1 ? 2 : 1; }
+/** Which story each photograph has been printed with: a photo never illustrates two different stories. */
+type PictureLedger = Map<string, string>;
+function block(item: Ranked, role: EditionBlock['role'], imagesLeft: { count: number }, ledger: PictureLedger): EditionBlock {
+  const id = item.article.publicationId;
+  const result: EditionBlock = { publicationId: id, role };
+  const free = (image: LicensedImage) => [image.id, image.url].every(key => !ledger.has(key) || ledger.get(key) === id);
+  const take = (image: LicensedImage) => { ledger.set(image.id, id); ledger.set(image.url, id); imagesLeft.count -= 1; };
+  const index = item.images.findIndex(free);
+  if (role !== 'brief' && index >= 0 && imagesLeft.count > 0) {
+    result.imageIndex = index; take(item.images[index]);
+    const inset = role === 'lead' ? item.images.findIndex((image, other) => other !== index && free(image)) : -1;
+    if (inset >= 0 && imagesLeft.count > 0) { result.insetIndex = inset; take(item.images[inset]); }
+  }
   if (role === 'lead' || role === 'feature') { const quote = pullQuoteFor(item.article.paragraphs); if (quote) result.pullQuote = quote; }
   return result;
 }
@@ -90,12 +100,12 @@ function chooseTemplate(majors: Ranked[], previous: EditionPageTemplate | undefi
 
 const teaserWords = (item: Ranked) => item.article.paragraphs.slice(0, 2).join(' ').split(/\s+/).filter(Boolean).length;
 
-function makePage(number: number, section: string, template: EditionPageTemplate, majors: Ranked[], briefs: Ranked[], teasers: Ranked[] = []): EditionPage {
+function makePage(ledger: PictureLedger, number: number, section: string, template: EditionPageTemplate, majors: Ranked[], briefs: Ranked[], teasers: Ranked[] = []): EditionPage {
   const imagesLeft = { count: MAX_IMAGES_PER_PAGE };
   const blocks: EditionBlock[] = [];
-  majors.forEach((item, index) => blocks.push(block(item, index === 0 ? (template === 'split' ? 'feature' : 'lead') : template === 'split' || template === 'features' ? 'feature' : 'secondary', imagesLeft)));
-  teasers.forEach(item => blocks.push({ ...block(item, 'secondary', imagesLeft), teaser: true }));
-  briefs.forEach(item => blocks.push(block(item, 'brief', imagesLeft)));
+  majors.forEach((item, index) => blocks.push(block(item, index === 0 ? (template === 'split' ? 'feature' : 'lead') : template === 'split' || template === 'features' ? 'feature' : 'secondary', imagesLeft, ledger)));
+  teasers.forEach(item => blocks.push({ ...block(item, 'secondary', imagesLeft, ledger), teaser: true }));
+  briefs.forEach(item => blocks.push(block(item, 'brief', imagesLeft, ledger)));
   const words = [...majors, ...briefs].reduce((total, item) => total + item.words, 0) + teasers.reduce((total, item) => total + teaserWords(item), 0);
   const substantial = words >= SUBSTANTIAL_PAGE_WORDS && majors.some(item => item.words >= SUBSTANTIAL_STORY_WORDS);
   return { number, section, template, blocks, words, substantial };
@@ -103,8 +113,9 @@ function makePage(number: number, section: string, template: EditionPageTemplate
 
 /** Arrange articles into pages. Every article appears exactly once; nothing is added. */
 export function composeEdition(articles: ComposableArticle[]): EditionPage[] {
-  if (!articles.length) return [];
+    if (!articles.length) return [];
   const ranked = rank(articles);
+  const ledger: PictureLedger = new Map();
   const majors = ranked.filter(item => !item.brief);
   const briefs = ranked.filter(item => item.brief);
   const pages: EditionPage[] = [];
@@ -119,7 +130,7 @@ export function composeEdition(articles: ComposableArticle[]): EditionPage[] {
   for (const item of pool) { if (secondaries.length >= Math.min(3, Math.max(2, Math.ceil(pool.length / 4)))) break; if (!secondaries.includes(item)) secondaries.push(item); }
   // Secondaries are teased on the front and printed in full inside, as a newspaper jumps a story.
   const frontBriefs = briefs.slice(0, lead ? 3 : MAX_BRIEFS_PER_PAGE * 2);
-  const front = makePage(1, 'Front Page', 'front', lead ? [lead] : [], frontBriefs, secondaries);
+  const front = makePage(ledger, 1, 'Front Page', 'front', lead ? [lead] : [], frontBriefs, secondaries);
   pages.push(front);
 
   // Section pages from what remains, strongest section first, split into pages of up to three majors.
@@ -152,7 +163,7 @@ export function composeEdition(articles: ComposableArticle[]): EditionPage[] {
     const sectionBriefs = leftoverBriefs.filter(item => (item.article.section || 'The Post') === group.section).slice(0, MAX_BRIEFS_PER_PAGE);
     for (const item of sectionBriefs) leftoverBriefs.splice(leftoverBriefs.indexOf(item), 1);
     const template = chooseTemplate(group.items, previous, sequence);
-    pages.push(makePage(pages.length + 1, group.section, template, group.items, sectionBriefs));
+    pages.push(makePage(ledger, pages.length + 1, group.section, template, group.items, sectionBriefs));
     previous = template;
   });
   // Remaining briefs join the lightest pages' rails; any excess becomes an In Brief page.
@@ -165,7 +176,7 @@ export function composeEdition(articles: ComposableArticle[]): EditionPage[] {
     target.substantial = target.words >= SUBSTANTIAL_PAGE_WORDS && target.blocks.some(entry => entry.role !== 'brief');
   }
   if (leftoverBriefs.length) {
-    const page = makePage(pages.length + 1, 'In Brief', 'text-led', [], leftoverBriefs.splice(0));
+    const page = makePage(ledger, pages.length + 1, 'In Brief', 'text-led', [], leftoverBriefs.splice(0));
     page.substantial = page.words >= SUBSTANTIAL_PAGE_WORDS;
     pages.push(page);
   }

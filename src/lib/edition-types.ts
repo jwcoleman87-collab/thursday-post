@@ -24,6 +24,8 @@ export interface EditionBlock {
   role: EditionBlockRole;
   /** Index into the article's images; absent means the block uses its typographic treatment. */
   imageIndex?: number;
+  /** A second picture of the same story, set inside the text of a page lead. */
+  insetIndex?: number;
   /** A direct quotation already inside the approved text, set large. */
   pullQuote?: string;
   /** Front-page teaser: the opening only, jumping to the page where the story is printed in full. */

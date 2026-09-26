@@ -78,7 +78,7 @@ test('corrections and updates never lead a page', () => {
 test('pages carry at most four pictures and briefs never take one', () => {
   const articles = Array.from({ length: 16 }, (_, index) => article(index, index % 4 === 0 ? 70 : 260, { images: [picture(`a${index}`), picture(`b${index}`)] }));
   for (const page of composeEdition(articles)) {
-    const used = page.blocks.reduce((total, block) => total + (block.imageIndex === undefined ? 0 : block.role === 'lead' ? 2 : 1), 0);
+    const used = page.blocks.reduce((total, block) => total + (block.imageIndex === undefined ? 0 : 1) + (block.insetIndex === undefined ? 0 : 1), 0);
     assert.ok(used <= 4, `page ${page.number} uses ${used} pictures`);
     assert.ok(page.blocks.filter(block => block.role === 'brief').every(block => block.imageIndex === undefined));
   }
@@ -107,4 +107,21 @@ test('section pages vary their templates rather than repeating one', () => {
   const templates = composeEdition(articles).slice(1).map(page => page.template);
   for (let index = 1; index < templates.length; index++) assert.ok(!(templates[index] === templates[index - 1] && templates[index] === 'picture-led'), templates.join(','));
   assert.ok(new Set(templates).size >= 2, templates.join(','));
+});
+
+test('the same photograph never illustrates two different stories', () => {
+  const shared = picture('flemington-shared', 'venue');
+  const articles = Array.from({ length: 10 }, (_, index) => article(index, 260, { images: [shared] }));
+  const pages = composeEdition(articles);
+  const users = new Set(pages.flatMap(page => page.blocks).filter(block => block.imageIndex !== undefined).map(block => block.publicationId));
+  assert.equal(users.size, 1);
+});
+
+test('a teased story keeps its own photograph when printed in full inside', () => {
+  const articles = Array.from({ length: 8 }, (_, index) => article(index, 260, { images: [picture(`own-${index}`)] }));
+  const pages = composeEdition(articles);
+  for (const teaser of pages[0].blocks.filter(block => block.teaser && block.imageIndex !== undefined)) {
+    const full = pages.flatMap(page => page.blocks).find(block => block.publicationId === teaser.publicationId && !block.teaser)!;
+    assert.equal(full.imageIndex, teaser.imageIndex);
+  }
 });
