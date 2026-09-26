@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { LicensedImage, Publication } from './domain';
-import { imageRightsCleared, licensedImageSchema, normaliseLicenceCode } from './image-rights';
+import { imageRightsCleared, imageRightsProblem, normaliseLicenceCode } from './image-rights';
 
 /**
  * The picture desk looks for openly licensed photographs of the story's own subjects: the horse,
@@ -14,10 +14,12 @@ const USER_AGENT = 'ThursdayPostPictureDesk/1.0 (https://the-racing-desk.vercel.
 const MAX_IMAGES_PER_STORY = 2;
 const MAX_TERMS = 4;
 const MIN_WIDTH = 800;
+const MIN_SUBJECT_WIDTH = 640;
 
-const RACING_WORDS = /\b(horses?|racehorses?|racing|races?|raced|jockeys?|trainers?|racecourses?|race ?courses?|turf|stakes|cups?|thoroughbreds?|mounting yard|geldings?|mares?|colts?|fill(?:y|ies)|stallions?|studs?|derby|oaks|plate|handicap|meetings?|carnivals?)\b/i;
+/** Unambiguous racing words. Weak words (cup, plate, stud, meeting) matched a 1940 radio station called WINX. */
+const RACING_WORDS = /\b(horses?|racehorses?|horse racing|racing|races?|raced|jockeys?|trainers? of racehorses|racecourses?|race ?courses?|thoroughbreds?|geldings?|mares?|colts?|fill(?:y|ies)|stallions?|derby|mounting yard|Melbourne Cup|Caulfield Cup|Cox Plate|Golden Slipper|Group 1)\b/i;
 /** A venue picture must show the racecourse, not a station, a statue of some other horse or a sign. */
-const NOT_A_VENUE_PICTURE = /\b(railway|station|train|tram|bus|statue|sculpture|memorial|plaque|sign|signage|map|aerial view of the city)\b/i;
+const NOT_A_VENUE_PICTURE = /\b(railway|station|train|tram|bus|statue|sculpture|memorial|plaque|sign|signage|map|car ?park|underpass|aerial view of the city)\b/i;
 /** Several racecourse names exist abroad (Scone and Perth in Scotland, Ascot in England). */
 const AUSTRALIAN_PLACE = /(?<![A-Za-z])(Australia|Australian|New South Wales|NSW|N\.S\.W\.|Victoria|Queensland|Qld|South Australia|Western Australia|Tasmania|Northern Territory|Sydney|Melbourne|Brisbane|Adelaide|Hobart|Darwin|Canberra|Hunter Region|Upper Hunter|Mid North Coast|Northern Rivers|Gold Coast|Sunshine Coast|outback)(?![A-Za-z])/i;
 /** Catalogue records from museum uploads are not captions. */
@@ -55,8 +57,8 @@ export function pictureTerms(text: { headline: string; paragraphs: string[] }): 
   return [...found.values()].sort((a, b) => b.weight - a.weight || (a.kind === 'subject' ? -1 : 1)).slice(0, MAX_TERMS);
 }
 
-export function commonsSearchUrl(term: PictureTerm, byCategory = false): string {
-  const query = byCategory ? `incategory:"${term.term}"` : term.kind === 'venue' ? `"${term.term}" racecourse` : `"${term.term}" (horse OR racing OR jockey OR trainer OR racecourse)`;
+export function commonsSearchUrl(term: PictureTerm, byCategory: false | 'horse' | 'exact' = false): string {
+  const query = byCategory ? (byCategory === 'horse' ? `incategory:"${term.term} (horse)"` : `incategory:"${term.term}"`) : term.kind === 'venue' ? `"${term.term}" racecourse` : `"${term.term}" (horse OR racing OR jockey OR trainer OR racecourse)`;
   const params = new URLSearchParams({
     action: 'query', format: 'json', formatversion: '2', origin: '*',
     generator: 'search', gsrnamespace: '6', gsrlimit: '10', gsrsearch: `${query} filetype:bitmap`,
@@ -88,7 +90,8 @@ export function commonsCandidates(response: unknown, term: PictureTerm, addedAt:
     const categories = meta(extmetadata, 'Categories');
     const haystack = `${title} ${description}`;
     if (!/^image\/(jpeg|webp)$/.test(info.mime ?? '')) { reject(`not a photograph (${info.mime})`); continue; }
-    if ((info.width ?? 0) < MIN_WIDTH) { reject(`too small (${info.width}px)`); continue; }
+    // Historic photographs of a subject are often small scans; a venue has plenty of modern ones.
+    if ((info.width ?? 0) < (term.kind === 'subject' ? MIN_SUBJECT_WIDTH : MIN_WIDTH)) { reject(`too small (${info.width}px)`); continue; }
     if (meta(extmetadata, 'NonFree').toLowerCase() === 'true') { reject('non-free'); continue; }
     if (REJECT_TITLE.test(title) || AI_GENERATED.test(`${haystack} ${categories}`)) { reject('logo, diagram or AI-generated'); continue; }
     if (!containsTerm(haystack, term.term)) { reject('does not name the subject'); continue; }
@@ -122,8 +125,7 @@ export function commonsCandidates(response: unknown, term: PictureTerm, addedAt:
       addedAt, addedBy: 'picture-desk',
     };
     if (imageRightsCleared(image)) { images.push(image); log?.push(`  ✓ ${page.title} (${image.licence.name}, ${credit})`); continue; }
-    const problem = licensedImageSchema.safeParse(image);
-    reject(problem.success ? `licence not open (${code || 'none'})` : `provenance incomplete (${problem.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ')})`);
+    reject(imageRightsProblem(image) ?? 'not cleared');
   }
   return images;
 }
@@ -140,10 +142,11 @@ export async function findLicensedImages(article: { headline: string; paragraphs
     if (options.deadline && Date.now() > options.deadline - 3_000) break;
     try {
       // A subject's Commons category often holds photographs whose descriptions never say "racing".
-      for (const byCategory of term.kind === 'subject' ? [false, true] : [false]) {
+      // The disambiguated horse category first ("Winx (horse)", not the Winx tower or radio station).
+      for (const byCategory of term.kind === 'subject' ? [false, 'horse', 'exact'] as const : [false] as const) {
         if (chosen.length >= MAX_IMAGES_PER_STORY) break;
         const response = await request(commonsSearchUrl(term, byCategory), { headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' }, signal: AbortSignal.timeout(8_000), redirect: 'error', cache: 'no-store' });
-        const label = `${term.term} (${term.kind}${byCategory ? ', category' : ''})`;
+        const label = `${term.term} (${term.kind}${byCategory ? `, ${byCategory} category` : ''})`;
         if (!response.ok) { options.log?.push(`${label}: search failed, HTTP ${response.status}`); continue; }
         const body = await response.json();
         options.log?.push(`${label}: ${((body as { query?: { pages?: unknown[] } })?.query?.pages ?? []).length} files returned`);

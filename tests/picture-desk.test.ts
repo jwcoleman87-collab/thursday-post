@@ -152,3 +152,16 @@ test('a statue of the story’s own horse is a fair subject picture, and plural 
   const pharLap = commonsCandidates(response([page('Phar Lap with his strapper.jpg', { ImageDescription: 'Phar Lap with his strapper Tommy Woodcock', Categories: 'Phar Lap|Racehorses from New Zealand' })]), { term: 'Phar Lap', kind: 'subject', weight: 3 }, '2026-09-26T00:00:00.000Z');
   assert.equal(pharLap.length, 1);
 });
+
+test('found on the live preview: a radio station called WINX is not the racehorse Winx', () => {
+  const winx = commonsCandidates(response([
+    page('Ted Weems and William P. Gottlieb WINX Washington 1940.jpg', { ImageDescription: 'Ted Weems and William P. Gottlieb at WINX radio, Washington, a studio meeting', Categories: 'WINX (radio station)|Gottlieb collection|Stud photographs|Plate negatives', License: 'pd', LicenseShortName: 'Public domain' }),
+  ]), { term: 'WINX', kind: 'subject', weight: 3 }, '2026-09-26T00:00:00.000Z');
+  assert.deepEqual(winx, []);
+});
+
+test('the log names the exact reason a picture is refused', () => {
+  const log: string[] = [];
+  commonsCandidates(response([page('Randwick Racecourse 003.jpg', { ImageDescription: 'Randwick Racecourse, Sydney', License: 'cc-by-nc-4.0', LicenseShortName: 'CC BY-NC 4.0' })]), { term: 'Randwick', kind: 'venue', weight: 2 }, '2026-09-26T00:00:00.000Z', log);
+  assert.ok(log.some(line => /licence not open \(cc-by-nc-4\.0\)/.test(line)), log.join('\n'));
+});

@@ -91,7 +91,7 @@ function chooseTemplate(majors: Ranked[], previous: EditionPageTemplate | undefi
   const leadPicture = lead?.images[0];
   const avoid = (template: EditionPageTemplate) => template === previous;
   if (majors.length === 2 && Math.abs(majors[0].words - majors[1].words) < 140 && !avoid('split')) return 'split';
-  if (leadPicture && leadPicture.width >= leadPicture.height && lead.words >= 160 && !avoid('picture-led')) return 'picture-led';
+  if (leadPicture && leadPicture.width >= leadPicture.height && leadPicture.width >= 1000 && lead.words >= 160 && !avoid('picture-led')) return 'picture-led';
   const rotation: EditionPageTemplate[] = majors.length >= 2 ? ['picture-led', 'text-led', 'features'] : ['picture-led', 'text-led'];
   for (let offset = 0; offset < rotation.length; offset++) {
     const template = rotation[(sequence + offset) % rotation.length];

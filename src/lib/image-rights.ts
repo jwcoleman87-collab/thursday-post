@@ -30,12 +30,24 @@ export function normaliseLicenceCode(code: string): string {
   return code.trim().toLowerCase().replace(/\s+/g, '-').replace(/^cc-?zero$/, 'cc0');
 }
 
+/** Why a picture may not print, or null when its licence permits reuse and its provenance is complete. */
+export function imageRightsProblem(image: LicensedImage): string | null {
+  const parsed = licensedImageSchema.safeParse(image);
+  if (!parsed.success) return `provenance incomplete (${parsed.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ')})`;
+  const code = normaliseLicenceCode(image.licence.code);
+  if (image.origin === 'wikimedia_commons') {
+    if (!OPEN_LICENCE.test(code)) return `licence not open (${code})`;
+    if (!image.sourcePage.startsWith('https://commons.wikimedia.org/')) return `provenance page is not on Commons (${image.sourcePage.slice(0, 80)})`;
+    if (new URL(image.url).hostname !== 'upload.wikimedia.org') return `file is not hosted by Wikimedia (${new URL(image.url).hostname})`;
+    return null;
+  }
+  if (!OWNER_LICENCE.test(code)) return `no owner permission recorded (${code})`;
+  return image.addedBy === 'James' ? null : 'owner pictures must be added by James';
+}
+
 /** A picture may print only when its licence permits reuse and its provenance is complete. */
 export function imageRightsCleared(image: LicensedImage): boolean {
-  if (!licensedImageSchema.safeParse(image).success) return false;
-  const code = normaliseLicenceCode(image.licence.code);
-  if (image.origin === 'wikimedia_commons') return OPEN_LICENCE.test(code) && image.sourcePage.startsWith('https://commons.wikimedia.org/') && new URL(image.url).hostname === 'upload.wikimedia.org';
-  return OWNER_LICENCE.test(code) && image.addedBy === 'James';
+  return imageRightsProblem(image) === null;
 }
 
 export function printableImages(images: LicensedImage[] | undefined): LicensedImage[] {
