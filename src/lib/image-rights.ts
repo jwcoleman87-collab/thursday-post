@@ -6,6 +6,8 @@ import type { LicensedImage } from './domain';
  * NoDerivatives licences are excluded: the paper is sold, and layouts crop and resize pictures.
  */
 const OPEN_LICENCE = /^(cc0|pd|public-domain|cc-by-(\d(\.\d)?)(-[a-z]{2,3})?|cc-by-sa-(\d(\.\d)?)(-[a-z]{2,3})?)$/;
+/** Wikimedia serves originals from upload.wikimedia.org and resized copies from thumb.wikimedia.org. */
+const WIKIMEDIA_FILE_HOSTS = new Set(['upload.wikimedia.org', 'thumb.wikimedia.org']);
 /** Owner-supplied pictures carry James's declaration of the permission he holds. */
 const OWNER_LICENCE = /^(owner-own-work|owner-licensed)$/;
 
@@ -38,7 +40,7 @@ export function imageRightsProblem(image: LicensedImage): string | null {
   if (image.origin === 'wikimedia_commons') {
     if (!OPEN_LICENCE.test(code)) return `licence not open (${code})`;
     if (!image.sourcePage.startsWith('https://commons.wikimedia.org/')) return `provenance page is not on Commons (${image.sourcePage.slice(0, 80)})`;
-    if (new URL(image.url).hostname !== 'upload.wikimedia.org') return `file is not hosted by Wikimedia (${new URL(image.url).hostname})`;
+    if (!WIKIMEDIA_FILE_HOSTS.has(new URL(image.url).hostname)) return `file is not hosted by Wikimedia (${new URL(image.url).hostname})`;
     return null;
   }
   if (!OWNER_LICENCE.test(code)) return `no owner permission recorded (${code})`;

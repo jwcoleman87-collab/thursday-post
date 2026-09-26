@@ -107,6 +107,8 @@ test('owner pictures need James’s own permission; Commons pictures need a Comm
   const commons = { ...base, id: 'c', origin: 'wikimedia_commons' as const, licence: { code: 'cc-by-4.0', name: 'CC BY 4.0' }, sourcePage: 'https://commons.wikimedia.org/wiki/File:X.jpg', addedBy: 'picture-desk' as const, url: 'https://upload.wikimedia.org/wikipedia/commons/x.jpg' };
   assert.ok(imageRightsCleared(commons));
   assert.ok(!imageRightsCleared({ ...commons, url: 'https://elsewhere.example.org/x.jpg' }));
+  // Found on the preview: Wikimedia serves resized copies of large files from thumb.wikimedia.org.
+  assert.ok(imageRightsCleared({ ...commons, url: 'https://thumb.wikimedia.org/wikipedia/commons/thumb/x.jpg/1600px-x.jpg' }));
 });
 
 test('a picture pass writes once, marks stories checked, and never searches the same story twice', async () => {
