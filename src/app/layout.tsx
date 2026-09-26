@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import "./paper.css";
+import "./edition-pages.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEWSROOM_PUBLIC_URL || 'https://the-racing-desk.vercel.app'),
