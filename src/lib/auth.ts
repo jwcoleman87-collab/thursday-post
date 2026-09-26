@@ -82,10 +82,20 @@ export function requireCron(request:Request) {
   const secret=process.env.CRON_SECRET;
   if(!secret || secret.length<32 || !equal(request.headers.get('authorization')||'',`Bearer ${secret}`))throw new HttpError('Unauthorized scheduler.',401);
 }
+/** Neon/Postgres resource exhaustion (quota, disk, memory, connections) and "not ready yet". The timer treats 503 as a deferred run. */
+function databaseTemporarilyUnavailable(error:unknown) {
+  if(!(error instanceof Error) || error.name!=='PostgresError')return false;
+  const code=(error as {code?:unknown}).code;
+  return code==='53000'||code==='53100'||code==='53200'||code==='53300'||code==='57P03';
+}
 export function errorResponse(error:unknown) {
   if(error instanceof HttpError)return Response.json({error:error.message},{status:error.status});
   if(error instanceof Error && ['ZodError','SyntaxError','WebhookVerificationError'].includes(error.name))return Response.json({error:'Invalid request or webhook signature.'},{status:400});
   if(error instanceof Error && error.name==='AdapterConfigurationError')return Response.json({error:error.message},{status:503});
+  if(databaseTemporarilyUnavailable(error)) {
+    console.error('Unhandled request failure',describeFailure(error));
+    return Response.json({error:'The newsroom database is temporarily unavailable. Check storage quota, then the next scheduled run will resume.'},{status:503});
+  }
   // Provider failures can contain response content; keep credentials/source material out of public errors.
   // The owner-only server log still needs the cause, or every outage reads as a bare HTTP 500.
   console.error('Unhandled request failure',describeFailure(error));

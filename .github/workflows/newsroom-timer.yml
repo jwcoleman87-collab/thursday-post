@@ -24,6 +24,6 @@ jobs:
           cat response.json; echo
           # 409 means a run was already in progress; that is fine.
           if [ "$status" = "200" ] || [ "$status" = "409" ]; then exit 0; fi
-          # 503 covers AI cooldowns and paused AI; the dashboard explains these in plain English.
+          # 503 covers AI cooldowns, paused AI, and a temporarily unavailable database (storage quota).
           if [ "$status" = "503" ]; then echo "::warning::Newsroom deferred this run (status 503)."; exit 0; fi
           echo "::error::Newsroom run failed with HTTP $status"; exit 1
