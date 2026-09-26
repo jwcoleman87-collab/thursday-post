@@ -77,7 +77,7 @@
 .ed-pullquote cite{display:block;font:11px Arial,sans-serif;margin-top:8px;font-style:normal}
 .ed-typepanel{background:var(--ed-panel);border-top:3px solid var(--ink);padding:22px 26px;margin:2px 0 22px;position:relative}
 .ed-typepanel-quote{display:grid;grid-template-columns:auto 1fr;gap:4px 16px;align-items:start}
-.ed-typepanel-mark{font:500 110px/.8 Georgia,serif;color:var(--accent);margin-top:6px}
+.ed-typepanel-mark{grid-row:span 2;font:500 96px/.78 Georgia,serif;color:var(--accent);margin-top:4px}
 .ed-typepanel-quote p{font:italic 500 clamp(22px,2.4vw,31px)/1.24 Georgia,serif;margin:0;letter-spacing:-.4px}
 .ed-typepanel-rule{grid-column:2;border-top:1px solid var(--rule);width:80px;margin-top:10px}
 .ed-panel-label{font:700 10px/1.4 Arial,sans-serif;letter-spacing:2px;text-transform:uppercase;margin:0 0 12px;color:var(--ink)}
