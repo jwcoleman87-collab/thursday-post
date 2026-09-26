@@ -6,6 +6,10 @@ import { readStore } from './store';
 import { draftHash } from './engine';
 import type { NewsroomState, Publication } from './domain';
 import type { EditionArticle, NewspaperEdition } from './edition-types';
+import { sectionFor } from './dashboard';
+import { composeEdition, editionReadiness } from './edition-layout';
+import { printableImages } from './image-rights';
+import { canonicalJson } from './integrity-json';
 
 const key = 'newspaper-editions';
 const initial = () => ({ version: 1 as const, editions: [] as NewspaperEdition[] });
@@ -27,8 +31,21 @@ export function eligiblePublication(publication: Publication, state: NewsroomSta
   return true;
 }
 
-export function editionReviewHash(edition: Pick<NewspaperEdition, 'id' | 'number' | 'date' | 'title' | 'preview' | 'articles'>) {
-  return createHash('sha256').update(JSON.stringify({ id: edition.id, number: edition.number, date: edition.date, title: edition.title, preview: edition.preview, articles: edition.articles })).digest('hex');
+type HashableEdition = Pick<NewspaperEdition, 'id' | 'number' | 'date' | 'title' | 'preview' | 'articles'> & { pages?: NewspaperEdition['pages'] };
+
+/** The key order the edition writer used before layout existed, rebuilt so a jsonb round trip cannot change the hash. */
+function legacyArticle(article: EditionArticle) {
+  return { publicationId: article.publicationId, storyId: article.storyId, draftHash: article.draftHash, headline: article.headline, byline: article.byline, paragraphs: article.paragraphs, sources: article.sources.map(source => ({ title: source.title, url: source.url })), limitations: article.limitations };
+}
+
+/**
+ * Editions with a page plan hash canonical JSON (key order independent, as PostgreSQL jsonb reorders
+ * keys). Editions made before layout keep their original hash by rebuilding the writer's key order.
+ */
+export function editionReviewHash(edition: HashableEdition) {
+  const hash = (text: string) => createHash('sha256').update(text).digest('hex');
+  if (edition.pages) return hash(canonicalJson({ id: edition.id, number: edition.number, date: edition.date, title: edition.title, preview: edition.preview, articles: edition.articles, pages: edition.pages }));
+  return hash(JSON.stringify({ id: edition.id, number: edition.number, date: edition.date, title: edition.title, preview: edition.preview, articles: edition.articles.map(legacyArticle) }));
 }
 
 function snapshots(ids: string[], state: NewsroomState): EditionArticle[] {
@@ -42,8 +59,18 @@ function snapshots(ids: string[], state: NewsroomState): EditionArticle[] {
       paragraphs: publication.draft.sentences.map(sentence => sentence.text),
       sources: state.sourceItems.filter(source => story.sourceItems.includes(source.id) && /^https?:\/\//i.test(source.url) && source.type !== 'email').map(source => ({ title: source.title, url: source.url })),
       limitations: [...publication.draft.limitations],
+      section: sectionFor(publication.draft.peAgentId),
+      ...(publication.draft.deck ? { deck: publication.draft.deck } : {}),
+      ...(publication.draft.label ? { label: publication.draft.label } : {}),
+      publishedAt: publication.publishedAt,
+      ...(printableImages(publication.images).length ? { images: printableImages(publication.images) } : {}),
     };
   });
+}
+
+/** The page plan for a set of snapshotted articles. */
+export function editionPages(articles: EditionArticle[]) {
+  return composeEdition(articles.map(article => ({ publicationId: article.publicationId, headline: article.headline, paragraphs: article.paragraphs, section: article.section, deck: article.deck, label: article.label, publishedAt: article.publishedAt, images: article.images })));
 }
 
 export async function listEditions(options: { includeDrafts?: boolean } = {}) {
@@ -63,7 +90,7 @@ export async function createEdition(input: unknown) {
   return updateDocument(key, initial, data => {
     if (data.editions.some(edition => edition.number === parsed.number)) throw new HttpError('That edition number already exists.', 409);
     const now = new Date().toISOString();
-    const edition: NewspaperEdition = { id: randomUUID(), number: parsed.number, date: parsed.date, title: parsed.title, preview: parsed.preview, articles, status: 'draft', createdAt: now, updatedAt: now, reviewHash: '' };
+    const edition: NewspaperEdition = { id: randomUUID(), number: parsed.number, date: parsed.date, title: parsed.title, preview: parsed.preview, articles, pages: editionPages(articles), status: 'draft', createdAt: now, updatedAt: now, reviewHash: '' };
     edition.reviewHash = editionReviewHash(edition);
     data.editions.push(edition);
     return edition;
@@ -79,7 +106,7 @@ export async function updateEdition(id: string, input: unknown, expectedReviewHa
     if (edition.status !== 'draft') throw new HttpError('Released editions cannot be edited. Create a new edition for corrections.', 409);
     if (edition.reviewHash !== expectedReviewHash) throw new HttpError('The edition changed. Review it again.', 409);
     if (data.editions.some(item => item.id !== id && item.number === parsed.number)) throw new HttpError('That edition number already exists.', 409);
-    Object.assign(edition, { number: parsed.number, date: parsed.date, title: parsed.title, preview: parsed.preview, articles, updatedAt: new Date().toISOString() });
+    Object.assign(edition, { number: parsed.number, date: parsed.date, title: parsed.title, preview: parsed.preview, articles, pages: editionPages(articles), updatedAt: new Date().toISOString() });
     edition.reviewHash = editionReviewHash(edition);
     return edition;
   });
@@ -97,6 +124,10 @@ export async function currentEditionArticles(edition: NewspaperEdition) {
 export async function releaseEdition(id: string, expectedReviewHash: string) {
   const candidate = await getEdition(id);
   if ((await currentEditionArticles(candidate)).length !== candidate.articles.length) throw new HttpError('An article has been withdrawn or changed. Update and review the edition.', 409);
+  if (candidate.status !== 'released') {
+    const readiness = editionReadiness(candidate.pages ?? editionPages(candidate.articles));
+    if (!readiness.ready) throw new HttpError(readiness.message, 409);
+  }
   return updateDocument(key, initial, data => {
     const edition = data.editions.find(item => item.id === id)!;
     if (!expectedReviewHash || edition.reviewHash !== expectedReviewHash || editionReviewHash(edition) !== expectedReviewHash) throw new HttpError('The edition changed. Review it again before release.', 409);
@@ -110,5 +141,6 @@ export async function releaseEdition(id: string, expectedReviewHash: string) {
 export async function editionPreview(edition: NewspaperEdition) {
   const articles = await currentEditionArticles(edition);
   const intact = articles.length === edition.articles.length;
-  return { id: edition.id, number: edition.number, date: edition.date, title: edition.title, preview: intact ? edition.preview : 'An article in this edition has been withdrawn. The remaining reporting is available below.', releasedAt: edition.releasedAt, articleCount: articles.length, articles: articles.map(article => ({ publicationId: article.publicationId, headline: article.headline, byline: article.byline })), withdrawnCount: edition.articles.length - articles.length };
+  const pages = edition.pages ?? editionPages(edition.articles);
+  return { id: edition.id, number: edition.number, date: edition.date, title: edition.title, preview: intact ? edition.preview : 'An article in this edition has been withdrawn. The remaining reporting is available below.', releasedAt: edition.releasedAt, articleCount: articles.length, articles: articles.map(article => ({ publicationId: article.publicationId, headline: article.headline, byline: article.byline, ...(article.section ? { section: article.section } : {}) })), withdrawnCount: edition.articles.length - articles.length, pageCount: pages.length, pages: pages.map(page => ({ number: page.number, section: page.section })) };
 }

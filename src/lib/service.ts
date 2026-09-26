@@ -10,6 +10,7 @@ import type { NewsroomState, SourceItem } from './domain';
 import { WAGERING_POLICY } from './policy';
 import { beginRunRecord, finishRunRecord } from './operations';
 import { sectionFor } from './dashboard';
+import { printableImages } from './image-rights';
 
 /** Trusted server dependencies permit isolated integration tests; HTTP actions never accept these fields. */
 export interface RunServices { deadline?: number; collect?: typeof collectSourceItems; createProvider?: typeof createLiveProvider }
@@ -233,6 +234,6 @@ export async function publicPayload(options:{canReadPaid?:boolean}={}) {
     const locked=!withdrawn&&publication.access!=='public'&&!options.canReadPaid;
     const correction=state.publications.find(p=>p.correctionOf===publication.id&&p.public&&p.mode==='live'&&p.status!=='removed'&&p.status!=='retracted');
     const notice=publication.statusHistory?.at(-1)?.note||publication.correctionReason||(correction?'This report has a published correction. See Corrections & Updates.':undefined);
-    return {id:publication.id,headline:publication.draft.headline,byline:publication.draft.byline,section:sectionFor(publication.draft.peAgentId),publishedAt:publication.publishedAt,paragraphs:locked||withdrawn?[]:publication.draft.sentences.map(s=>({text:s.text,claimIds:s.claimIds})),sources:locked||withdrawn?[]:state.sourceItems.filter(source=>ids.has(source.id)&&source.type!=='email'&&source.url.startsWith('https://')).map(source=>({title:source.title,url:source.url})),limitations:locked||withdrawn?[]:publication.draft.limitations,excerpt:withdrawn?'':publication.draft.sentences[0]?.text.slice(0,180)||'',locked,status:publication.status||'published',notice,correctionOf:publication.correctionOf,correctionId:correction?.id,deck:withdrawn?undefined:publication.draft.deck,label:publication.draft.label};
+    return {id:publication.id,headline:publication.draft.headline,byline:publication.draft.byline,section:sectionFor(publication.draft.peAgentId),publishedAt:publication.publishedAt,paragraphs:locked||withdrawn?[]:publication.draft.sentences.map(s=>({text:s.text,claimIds:s.claimIds})),sources:locked||withdrawn?[]:state.sourceItems.filter(source=>ids.has(source.id)&&source.type!=='email'&&source.url.startsWith('https://')).map(source=>({title:source.title,url:source.url})),limitations:locked||withdrawn?[]:publication.draft.limitations,excerpt:withdrawn?'':publication.draft.sentences[0]?.text.slice(0,180)||'',locked,status:publication.status||'published',notice,correctionOf:publication.correctionOf,correctionId:correction?.id,deck:withdrawn?undefined:publication.draft.deck,label:publication.draft.label,images:withdrawn?[]:printableImages(publication.images)};
   })};
 }

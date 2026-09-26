@@ -28,6 +28,9 @@ process.env.AUTH_SECRET = randomBytes(32).toString('hex');
 process.env.MEMBER_SESSION_SECRET = randomBytes(32).toString('hex');
 process.env.ADMIN_PASSWORD = randomBytes(24).toString('hex');
 process.env.LOCAL_DEMO_ACCESS = 'false';
+// These tests cover snapshots, hashes, entitlement and delivery with one-line fixture articles.
+// The five-page release gate has its own tests in edition-pages.test.ts.
+process.env.EDITION_MINIMUM_PAGES = '0';
 process.env.RESEND_API_KEY = 'test-only-no-network';
 process.env.STRIPE_SECRET_KEY = 'sk_test_editions_fixture_only';
 process.env.RESEND_FROM_EMAIL = 'The Thursday Post <editions@post.example.org>';

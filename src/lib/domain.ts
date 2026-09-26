@@ -39,6 +39,34 @@ export interface MediaAsset {
   allowed: boolean;
 }
 
+/**
+ * An image the paper may print. Every field is provenance: where it came from, who made it,
+ * the licence that permits reuse, and what it actually shows. Pictures are referenced by URL
+ * at their licensed host, never copied into the database.
+ */
+export interface LicensedImage {
+  id: string;
+  /** https URL of the image file (or licensed thumbnail) at its source. */
+  url: string;
+  width: number;
+  height: number;
+  alt: string;
+  /** What the picture shows, from its source description; never invented to fit the story. */
+  caption: string;
+  /** Author or rights holder as the source credits them. */
+  credit: string;
+  licence: { code: string; name: string; url?: string };
+  origin: "wikimedia_commons" | "owner_supplied";
+  /** Human-readable page recording the image's provenance (e.g. the Commons file page). */
+  sourcePage: string;
+  /** How the picture relates to the story: the subject itself, the venue, or a general file photo. */
+  relevance: "subject" | "venue" | "file";
+  /** The story term the picture was matched on (a horse, person or racecourse). */
+  matchedTerm: string;
+  addedAt: string;
+  addedBy: "picture-desk" | "James";
+}
+
 export interface SourceItem {
   id: string;
   title: string;
@@ -256,6 +284,10 @@ export interface Publication {
   correctionOf?: string;
   correctionReason?: string;
   access?: "public" | "members";
+  /** Licensed pictures chosen for this story. Kept outside the draft so the approved text hash is unchanged. */
+  images?: LicensedImage[];
+  /** When the picture desk last looked for licensed images, so it never searches the same story twice. */
+  picturesCheckedAt?: string;
 }
 
 export interface NewsroomState {
