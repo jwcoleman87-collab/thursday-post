@@ -16,9 +16,14 @@ const MAX_TERMS = 4;
 const MIN_WIDTH = 800;
 const MIN_SUBJECT_WIDTH = 640;
 
-/** Unambiguous racing words. Weak words (cup, plate, stud, meeting) matched a 1940 radio station called WINX. */
-const RACING_WORDS = /\b(horses?|racehorses?|horse racing|racing|races?|raced|jockeys?|trainers? of racehorses|racecourses?|race ?courses?|thoroughbreds?|geldings?|mares?|colts?|fill(?:y|ies)|stallions?|derby|mounting yard|Melbourne Cup|Caulfield Cup|Cox Plate|Golden Slipper|Group 1)\b/i;
+/**
+ * Unambiguous racing words. Weak words (cup, plate, stud, meeting, and "race" alone, as in the music
+ * category "Race records") let a 1940 photograph at radio station WINX through as the racehorse Winx.
+ */
+const RACING_WORDS = /\b(horses?|racehorses?|horse racing|horse races?|racing (?:club|carnival|season|colours)|jockeys?|trainers? of racehorses|racecourses?|race ?courses?|racetracks?|thoroughbreds?|geldings?|mares?|colts?|fill(?:y|ies)|stallions?|derby|mounting yard|Melbourne Cup|Caulfield Cup|Cox Plate|Golden Slipper|Group 1)\b/i;
 /** A venue picture must show the racecourse, not a station, a statue of some other horse or a sign. */
+/** Pictures of something else that happened at the racecourse (a war camp, a concert) do not illustrate racing there. */
+const ANOTHER_EVENT = /\b(soldiers?|troops|army|military|battalion|expeditionary|war|camp|concert|festival|market|protest|evacuation)\b/i;
 const NOT_A_VENUE_PICTURE = /\b(railway|station|train|tram|bus|statue|sculpture|memorial|plaque|sign|signage|map|car ?park|underpass|aerial view of the city)\b/i;
 /** Several racecourse names exist abroad (Scone and Perth in Scotland, Ascot in England). */
 const AUSTRALIAN_PLACE = /(?<![A-Za-z])(Australia|Australian|New South Wales|NSW|N\.S\.W\.|Victoria|Queensland|Qld|South Australia|Western Australia|Tasmania|Northern Territory|Sydney|Melbourne|Brisbane|Adelaide|Hobart|Darwin|Canberra|Hunter Region|Upper Hunter|Mid North Coast|Northern Rivers|Gold Coast|Sunshine Coast|outback)(?![A-Za-z])/i;
@@ -72,7 +77,8 @@ const stripHtml = (value: unknown) => typeof value === 'string' ? value.replace(
 const meta = (extmetadata: Record<string, { value?: unknown }> | undefined, key: string) => stripHtml(extmetadata?.[key]?.value);
 // Flickr and archive upload numbers in brackets are not part of what the picture shows.
 const titleText = (title: string) => title.replace(/^File:/, '').replace(/\.[a-z0-9]{2,4}$/i, '').replace(/[_]+/g, ' ').replace(/\s*\(\d{6,}\)/g, '').trim();
-const containsTerm = (haystack: string, term: string) => new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')}\\b`, 'i').test(haystack);
+/** Names match with their capitals ("Winx" the horse is not "WINX" the radio station); places ignore case. */
+const containsTerm = (haystack: string, term: string, exactCase = false) => new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')}\\b`, exactCase ? '' : 'i').test(haystack);
 
 interface CommonsPage { title?: string; index?: number; imageinfo?: { url?: string; thumburl?: string; thumbwidth?: number; thumbheight?: number; width?: number; height?: number; mime?: string; descriptionurl?: string; extmetadata?: Record<string, { value?: unknown }> }[] }
 
@@ -94,10 +100,11 @@ export function commonsCandidates(response: unknown, term: PictureTerm, addedAt:
     if ((info.width ?? 0) < (term.kind === 'subject' ? MIN_SUBJECT_WIDTH : MIN_WIDTH)) { reject(`too small (${info.width}px)`); continue; }
     if (meta(extmetadata, 'NonFree').toLowerCase() === 'true') { reject('non-free'); continue; }
     if (REJECT_TITLE.test(title) || AI_GENERATED.test(`${haystack} ${categories}`)) { reject('logo, diagram or AI-generated'); continue; }
-    if (!containsTerm(haystack, term.term)) { reject('does not name the subject'); continue; }
+    if (!containsTerm(haystack, term.term, term.kind === 'subject')) { reject('does not name the subject'); continue; }
     if (term.kind === 'subject' && !RACING_WORDS.test(`${haystack} ${categories}`)) { reject('not about racing'); continue; }
     if (term.kind === 'venue' && !VENUE_WORDS.test(`${haystack} ${categories}`) && !RACING_WORDS.test(`${haystack} ${categories}`)) { reject('not the racecourse'); continue; }
     if (term.kind === 'venue' && NOT_A_VENUE_PICTURE.test(haystack)) { reject('shows a station, statue or sign, not the racecourse'); continue; }
+    if (term.kind === 'venue' && ANOTHER_EVENT.test(haystack)) { reject('shows another event at the venue'); continue; }
     if (term.kind === 'venue' && !AUSTRALIAN_PLACE.test(`${haystack} ${categories}`)) { reject('not in Australia'); continue; }
     const code = normaliseLicenceCode(meta(extmetadata, 'License') || meta(extmetadata, 'LicenseShortName'));
     const credit = (meta(extmetadata, 'Artist') || meta(extmetadata, 'Credit')).slice(0, 200);

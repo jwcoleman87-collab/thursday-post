@@ -160,10 +160,20 @@ test('found on the live preview: a radio station called WINX is not the racehors
     page('Ted Weems and William P. Gottlieb WINX Washington 1940.jpg', { ImageDescription: 'Ted Weems and William P. Gottlieb at WINX radio, Washington, a studio meeting', Categories: 'WINX (radio station)|Gottlieb collection|Stud photographs|Plate negatives', License: 'pd', LicenseShortName: 'Public domain' }),
   ]), { term: 'WINX', kind: 'subject', weight: 3 }, '2026-09-26T00:00:00.000Z');
   assert.deepEqual(winx, []);
+  // As the preview returned it: the category search for the horse Winx, with the music category "Race records".
+  const asFound = commonsCandidates(response([
+    page('Ted Weems and William P. Gottlieb WINX Washington 1940.jpg', { ImageDescription: 'Ted Weems and William P. Gottlieb, WINX, Washington, D.C., 1940', Categories: 'WINX (AM)|William P. Gottlieb collection|Race records|Ted Weems', License: 'pd', LicenseShortName: 'Public domain' }),
+  ]), { term: 'Winx', kind: 'subject', weight: 3 }, '2026-09-26T00:00:00.000Z');
+  assert.deepEqual(asFound, []);
 });
 
 test('the log names the exact reason a picture is refused', () => {
   const log: string[] = [];
   commonsCandidates(response([page('Randwick Racecourse 003.jpg', { ImageDescription: 'Randwick Racecourse, Sydney', License: 'cc-by-nc-4.0', LicenseShortName: 'CC BY-NC 4.0' })]), { term: 'Randwick', kind: 'venue', weight: 2 }, '2026-09-26T00:00:00.000Z', log);
   assert.ok(log.some(line => /licence not open \(cc-by-nc-4\.0\)/.test(line)), log.join('\n'));
+});
+
+test('a picture of another event at the racecourse does not illustrate racing there', () => {
+  const soldiers = commonsCandidates(response([page('Expeditionary Forces World War I at Morphettville Racecourse.jpg', { ImageDescription: 'The soldiers are most likely from the 10th Infantry Battalion, exercising at Morphettville Racecourse, South Australia', License: 'pd', LicenseShortName: 'Public domain' })]), { term: 'Morphettville', kind: 'venue', weight: 2 }, '2026-09-26T00:00:00.000Z');
+  assert.deepEqual(soldiers, []);
 });
